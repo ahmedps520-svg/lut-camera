@@ -1,10 +1,9 @@
 name: Deploy to GitHub Pages
 
+# Manual only. If you set Settings -> Pages -> Source to "GitHub Actions",
+# run this workflow to publish; with the simpler "Deploy from a branch"
+# source, GitHub publishes on every push and this workflow isn't needed.
 on:
-  push:
-    branches:
-      - claude/camera-app-lut-presets-zli0pn
-      - main
   workflow_dispatch:
 
 permissions:

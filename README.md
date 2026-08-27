@@ -148,3 +148,22 @@ The app tells you plainly if the browser can't run the colour engine.
 ## Licence
 
 Copyright © the repository owner. All rights reserved.
+
+---
+
+## Deploying
+
+The app is static, so GitHub Pages serves it as-is (and Pages gives you HTTPS,
+which the camera API requires).
+
+**One-time setup** — <https://github.com/ahmedps520-svg/lut-camera/settings/pages>:
+
+1. **Source** → *Deploy from a branch*
+2. **Branch** → `claude/camera-app-lut-presets-zli0pn`, folder `/ (root)` → **Save**
+
+The site goes live a minute later at
+**<https://ahmedps520-svg.github.io/lut-camera/>** and republishes on every push.
+
+Prefer CI instead? Set **Source** → *GitHub Actions* and run the
+`Deploy to GitHub Pages` workflow in the Actions tab — `.github/workflows/pages.yml`
+is already there.
