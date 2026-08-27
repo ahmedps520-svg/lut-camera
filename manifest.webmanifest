@@ -1,0 +1,20 @@
+{
+  "name": "LUMA — LUT Camera",
+  "short_name": "LUMA",
+  "description": "A premium camera with live LUT grading, custom .cube import and one-tap export to your photo album.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08090b",
+  "theme_color": "#08090b",
+  "categories": ["photo", "graphics", "lifestyle"],
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    { "action": "./index.html", "accept": { "text/plain": [".cube"] } }
+  ]
+}

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>LUMA — LUT Camera</title>
+<meta name="description" content="A premium camera with live LUT grading, custom .cube import and one-tap export to your photo album." />
+<meta name="theme-color" content="#08090b" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="LUMA" />
+<meta name="format-detection" content="telephone=no" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="apple-touch-icon" href="./assets/icon-180.png" />
+<link rel="icon" href="./assets/icon-192.png" />
+<link rel="stylesheet" href="./styles/base.css" />
+<link rel="stylesheet" href="./styles/app.css" />
+</head>
+<body>
+
+<main id="app" class="app">
+
+  <!-- ───────────────────────── VIEWFINDER ───────────────────────── -->
+  <section class="stage" id="stage">
+    <div class="frame" id="frame" data-ratio="3:4">
+      <canvas id="preview" class="preview"></canvas>
+
+      <div class="grid-overlay" id="gridOverlay" hidden>
+        <span></span><span></span><span></span><span></span>
+      </div>
+
+      <div class="focus-ring" id="focusRing" hidden></div>
+      <div class="shutter-flash" id="shutterFlash"></div>
+
+      <div class="compare-badge" id="compareBadge" hidden>ORIGINAL</div>
+
+      <div class="countdown" id="countdown" hidden></div>
+
+      <!-- Camera not started / denied -->
+      <div class="gate" id="gate">
+        <div class="gate-inner">
+          <div class="mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48" width="52" height="52"><circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-width="1.25" opacity=".35"/><circle cx="24" cy="24" r="11.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="24" cy="24" r="4" fill="currentColor"/><path d="M24 3v6M24 39v6M3 24h6M39 24h6" stroke="currentColor" stroke-width="1.25" opacity=".5"/></svg>
+          </div>
+          <h1 class="gate-title">LUMA</h1>
+          <p class="gate-sub" id="gateSub">Cinematic colour, live in your viewfinder.</p>
+          <button class="btn btn-primary" id="startCam">Enable Camera</button>
+          <button class="btn btn-ghost" id="gateGallery">Open Library</button>
+          <p class="gate-fine">Video never leaves your device. Frames are graded on-device with WebGL.</p>
+        </div>
+      </div>
+
+      <!-- Top bar -->
+      <header class="topbar" id="topbar">
+        <button class="chip" id="btnTorch" title="Torch" aria-label="Torch">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/></svg>
+        </button>
+        <button class="chip" id="btnGrid" title="Grid" aria-label="Grid">
+          <svg viewBox="0 0 24 24" class="ico stroke"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+        </button>
+        <button class="chip" id="btnTimer" title="Timer" aria-label="Timer"><span class="chip-text" id="timerLabel">OFF</span></button>
+        <button class="chip" id="btnRatio" title="Aspect ratio" aria-label="Aspect ratio"><span class="chip-text" id="ratioLabel">3:4</span></button>
+        <div class="spacer"></div>
+        <button class="chip chip-pro" id="btnPro">
+          <svg viewBox="0 0 24 24" class="ico"><path d="m12 2 2.9 6.1 6.6.9-4.8 4.6 1.2 6.6L12 17.1 6.1 20.2l1.2-6.6L2.5 9l6.6-.9L12 2Z"/></svg>
+          <span class="chip-text" id="proLabel">PRO</span>
+        </button>
+      </header>
+
+      <!-- Zoom rail -->
+      <div class="zoomrail" id="zoomRail">
+        <button class="zoom" data-zoom="1">1×</button>
+        <button class="zoom" data-zoom="2">2×</button>
+        <button class="zoom" data-zoom="3">3×</button>
+      </div>
+    </div>
+
+    <!-- ───────────────────────── CONTROLS ───────────────────────── -->
+    <div class="controls">
+      <div class="strength" id="strengthWrap">
+        <span class="strength-name" id="lutName">Neutral</span>
+        <input type="range" id="strength" min="0" max="100" value="100" class="range" aria-label="LUT intensity" />
+        <span class="strength-val" id="strengthVal">100</span>
+      </div>
+
+      <div class="filmstrip-wrap">
+        <div class="filmstrip" id="filmstrip" role="tablist" aria-label="Looks"></div>
+      </div>
+
+      <div class="actionbar">
+        <button class="round ghost" id="btnLibrary" aria-label="Library">
+          <span class="thumb-frame" id="lastShot"><span class="thumb-empty"></span></span>
+        </button>
+
+        <button class="shutter" id="shutter" aria-label="Capture"><span class="shutter-in"></span></button>
+
+        <button class="round ghost" id="btnFlip" aria-label="Switch camera">
+          <svg viewBox="0 0 24 24" class="ico stroke"><path d="M4 8h3l1.6-2.4h6.8L17 8h3v11H4z"/><path d="M9.5 13.5a2.5 2.5 0 0 1 4.6-1.4M14.5 13.5a2.5 2.5 0 0 1-4.6 1.4"/><path d="m9.2 11-1 1.4 1.7.3M14.8 16l1-1.4-1.7-.3"/></svg>
+        </button>
+      </div>
+
+      <nav class="tabbar">
+        <button class="tab" data-sheet="luts">
+          <svg viewBox="0 0 24 24" class="ico stroke"><path d="M12 3a9 9 0 1 0 0 18c1.6 0 2.2-1.2 1.5-2.2-.7-1 .1-2.3 1.4-2.3H18a3 3 0 0 0 3-3c0-5-4-10.5-9-10.5Z"/><circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="17" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <span>Looks</span>
+        </button>
+        <button class="tab" data-sheet="adjust">
+          <svg viewBox="0 0 24 24" class="ico stroke"><path d="M5 21V9m0-6v2m14 16v-8m0-6V3M12 21v-5m0-6V3"/><circle cx="5" cy="6.5" r="2.2"/><circle cx="19" cy="12.5" r="2.2"/><circle cx="12" cy="13" r="2.2"/></svg>
+          <span>Adjust</span>
+        </button>
+        <button class="tab" data-sheet="gallery">
+          <svg viewBox="0 0 24 24" class="ico stroke"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m6 16 3.6-4 2.7 3 2.3-2.4L18 16"/><circle cx="9" cy="9.5" r="1.3"/></svg>
+          <span>Library</span>
+        </button>
+        <button class="tab" data-sheet="settings">
+          <svg viewBox="0 0 24 24" class="ico stroke"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.8 12h2.4M18.8 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+    </div>
+  </section>
+</main>
+
+<!-- ───────────────────────── SHEETS ───────────────────────── -->
+<div class="scrim" id="scrim" hidden></div>
+
+<!-- Looks / LUT library -->
+<section class="sheet" id="sheet-luts" hidden aria-hidden="true">
+  <div class="grabber"></div>
+  <header class="sheet-head">
+    <h2>Looks</h2>
+    <div class="sheet-actions">
+      <button class="btn btn-small" id="btnImport">Import .cube</button>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </div>
+  </header>
+  <div class="segmented" id="lutFilter">
+    <button class="seg on" data-filter="all">All</button>
+    <button class="seg" data-filter="film">Film</button>
+    <button class="seg" data-filter="cine">Cinema</button>
+    <button class="seg" data-filter="mono">Mono</button>
+    <button class="seg" data-filter="custom">Mine</button>
+  </div>
+  <div class="sheet-body">
+    <div class="lut-grid" id="lutGrid"></div>
+    <p class="hint">Drop a <code>.cube</code> file anywhere in the app to import it. 3D LUTs up to 64³ and 1D LUTs are supported.</p>
+  </div>
+  <input type="file" id="fileInput" accept=".cube,.CUBE,text/plain" multiple hidden />
+</section>
+
+<!-- Adjust -->
+<section class="sheet" id="sheet-adjust" hidden aria-hidden="true">
+  <div class="grabber"></div>
+  <header class="sheet-head">
+    <h2>Adjust</h2>
+    <div class="sheet-actions">
+      <button class="btn btn-small" id="btnResetAdjust">Reset</button>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </div>
+  </header>
+  <div class="sheet-body" id="adjustBody"></div>
+</section>
+
+<!-- Gallery -->
+<section class="sheet sheet-tall" id="sheet-gallery" hidden aria-hidden="true">
+  <div class="grabber"></div>
+  <header class="sheet-head">
+    <h2>Library</h2>
+    <div class="sheet-actions">
+      <button class="btn btn-small" id="btnSaveAll">Export all</button>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </div>
+  </header>
+  <div class="sheet-body">
+    <div class="shot-grid" id="shotGrid"></div>
+    <p class="empty" id="galleryEmpty">Nothing here yet. Your shots stay on this device until you export them.</p>
+  </div>
+</section>
+
+<!-- Settings -->
+<section class="sheet" id="sheet-settings" hidden aria-hidden="true">
+  <div class="grabber"></div>
+  <header class="sheet-head">
+    <h2>Settings</h2>
+    <div class="sheet-actions"><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+  </header>
+  <div class="sheet-body" id="settingsBody"></div>
+</section>
+
+<!-- Photo viewer -->
+<section class="viewer" id="viewer" hidden>
+  <header class="viewer-head">
+    <button class="icon-btn" id="viewerClose" aria-label="Close">✕</button>
+    <span class="viewer-meta" id="viewerMeta"></span>
+    <button class="icon-btn danger" id="viewerDelete" aria-label="Delete">
+      <svg viewBox="0 0 24 24" class="ico stroke"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 12.5h9L17.5 7"/></svg>
+    </button>
+  </header>
+  <div class="viewer-body"><img id="viewerImg" alt="Captured photo" /></div>
+  <footer class="viewer-foot">
+    <button class="btn btn-primary" id="viewerSave">Save to Photos</button>
+    <button class="btn btn-ghost" id="viewerDownload">Download</button>
+  </footer>
+</section>
+
+<!-- ───────────────────────── PAYWALL ───────────────────────── -->
+<section class="paywall" id="paywall" hidden>
+  <div class="paywall-bg"></div>
+  <button class="icon-btn paywall-close" id="paywallClose" aria-label="Close">✕</button>
+  <div class="paywall-scroll">
+    <div class="paywall-mark">
+      <svg viewBox="0 0 24 24" width="34" height="34"><path d="m12 2 2.9 6.1 6.6.9-4.8 4.6 1.2 6.6L12 17.1 6.1 20.2l1.2-6.6L2.5 9l6.6-.9L12 2Z"/></svg>
+    </div>
+    <h2 class="paywall-title">LUMA Pro</h2>
+    <p class="paywall-sub">The full colour lab — every look, unlimited imports, clean exports at full resolution.</p>
+
+    <ul class="perks">
+      <li><b>32 signature looks</b><span>Film stocks, cinema grades and mono emulsions, tuned by hand.</span></li>
+      <li><b>Unlimited .cube imports</b><span>Bring your own LUTs from Resolve, Lightroom or your colourist.</span></li>
+      <li><b>Clean full-resolution export</b><span>No watermark, maximum sensor resolution, straight to Photos.</span></li>
+      <li><b>Pro controls</b><span>Grain, halation, split-tone, curve and white-balance fine tuning.</span></li>
+    </ul>
+
+    <div class="plans" id="plans"></div>
+
+    <button class="btn btn-primary btn-lg" id="btnSubscribe">Start 7-day free trial</button>
+    <p class="paywall-fine" id="planFine"></p>
+    <div class="paywall-links">
+      <button class="link" id="btnRestore">Restore purchases</button>
+      <button class="link" id="btnTerms">Terms</button>
+      <button class="link" id="btnPrivacy">Privacy</button>
+    </div>
+    <p class="paywall-demo">Demo checkout — this web build simulates the purchase locally and takes no payment. The billing adapter in <code>src/billing.js</code> is where StoreKit 2 or Stripe drops in.</p>
+  </div>
+</section>
+
+<div class="toast-host" id="toastHost" aria-live="polite"></div>
+<div class="dropzone" id="dropzone" hidden><span>Drop .cube to import</span></div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
