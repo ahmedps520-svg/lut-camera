@@ -35,6 +35,7 @@ const state = {
   compare: false,
   running: false,
   busy: false,
+  frames: 0,          // rendered viewfinder frames — handy when chasing jank
   // merged with the defaults so a stored blob from an older build can't leave a
   // control undefined
   adjust: {
@@ -126,14 +127,23 @@ async function ensureUploaded(renderer, id, size) {
    Render loop
    ──────────────────────────────────────────────────────────── */
 
+let lastBox = '';
+
+/** Letterbox the canvas to the selected aspect inside the frame. */
 function syncFrameBox() {
   const r = ratio().value;
   const box = dom.frame.getBoundingClientRect();
   if (!box.width) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  // Fit the requested aspect inside the available frame box.
+
   let w = box.width, h = box.width / r;
   if (h > box.height) { h = box.height; w = box.height * r; }
+
+  // runs every frame — don't touch style unless something actually moved
+  const sig = `${w.toFixed(2)}x${h.toFixed(2)}@${box.width.toFixed(2)},${box.height.toFixed(2)},${dpr}`;
+  if (sig === lastBox) return;
+  lastBox = sig;
+
   dom.preview.style.width = w + 'px';
   dom.preview.style.height = h + 'px';
   dom.preview.style.left = ((box.width - w) / 2) + 'px';
@@ -168,6 +178,7 @@ function loop(now) {
   if (!state.running || state.busy || viewfinderObscured()) return;
   syncFrameBox();
   drawPreview();
+  state.frames++;
   if (state.settings.liveThumbs && now - lastThumbRefresh > 2000) {
     lastThumbRefresh = now;
     refreshThumbs();
@@ -851,7 +862,8 @@ async function doCapture() {
       lookName: look?.name || '',
     });
 
-    // restore the viewfinder surface immediately
+    // the capture resized the shared canvas — restore the viewfinder surface now
+    lastBox = '';
     syncFrameBox();
     drawPreview();
 
