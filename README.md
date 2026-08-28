@@ -18,7 +18,8 @@ no backend — every frame is processed on-device in WebGL2.
 | **Look intensity** | Blend any LUT from 0–100%, live. |
 | **Press-and-hold compare** | Hold the viewfinder to see the ungraded frame. |
 | **Adjustments** | Exposure, contrast, fade, saturation, temperature, tint, clarity, grain, halation, vignette — all in the same shader pass. |
-| **Export to Photos** | The native share sheet (`navigator.share` with files) → **Save Image** on iOS. Falls back to a download elsewhere. |
+| **LUMA Motion (Pro)** | Record video straight off the graded canvas — the look, grain and grade are baked into the file, not applied afterwards. Optional microphone audio. |
+| **Export to Photos** | The native share sheet (`navigator.share` with files) → **Save Image / Save Video** on iOS. Falls back to a download elsewhere. |
 | **Subscription** | Free tier + LUMA Pro, with a real entitlement flow behind a swappable billing adapter. |
 | **Offline / installable** | PWA with a service worker. Add to Home Screen for a full-screen, chrome-free camera. |
 
@@ -44,12 +45,16 @@ full-bleed into the safe areas, with no browser chrome.
 ### Tests
 
 ```bash
-node test/smoke.mjs
+node test/pricing.mjs     # regional pricing: mapping, formatting, price points
+node test/features.mjs    # paywall currency per locale + Motion (video) end to end
+node test/smoke.mjs       # the full camera flow, in a real browser
 ```
 
-Drives the real app in Chromium with a synthetic camera: boot, capture, look
-switching, LUT import, the free-tier limits, purchase, unlock, and the adjust /
-settings panels. Writes screenshots to `test/shot-*.png`.
+`smoke.mjs` drives the app in Chromium against a synthetic camera: boot,
+capture, look switching, LUT import, the free-tier limits, purchase, unlock, and
+the adjust / settings panels (37 checks). `features.mjs` opens the paywall under
+four locales and records a real clip as a Pro user (35 checks). `pricing.mjs` is
+a plain Node unit test (43 checks). Screenshots land in `test/shot-*.png`.
 
 ---
 
@@ -76,6 +81,12 @@ lut/cube.js  ─ parse ──┴──▶ 3D texture (RGBA8, trilinear)
   (readback is the expensive part — batching it is what keeps the strip smooth).
 * **`src/capture.js`** — renders the still at full sensor resolution through the same
   shader, then hands it to the OS.
+* **`src/video.js`** — LUMA Motion. `canvas.captureStream()` off the graded
+  viewfinder means the look is *in* the recording, not applied afterwards; the
+  microphone is requested when you enter video mode so the record tap is instant,
+  and a refusal is remembered rather than retried on every take.
+* **`src/pricing.js`** — region → currency → published price point, formatted
+  with `Intl.NumberFormat`.
 * **`src/store.js`** — IndexedDB for shots and imported LUTs. Nothing leaves the device;
   there is no server in this app.
 
@@ -94,10 +105,21 @@ lut/cube.js  ─ parse ──┴──▶ 3D texture (RGBA8, trilinear)
 `src/billing.js` owns everything about money. The rest of the app only ever asks
 questions like `billing.canUseLook(look)`, `billing.watermark`, `billing.maxLongEdge`.
 
-**Free**: 4 looks, 1 imported LUT, 1600px exports with a small watermark.
-**Pro** (`$4.99/mo`, `$29.99/yr` with a 7-day trial, or `$79.99` lifetime): everything —
-all looks, unlimited imports, full-resolution clean exports, the pro adjustment set,
-`.cube` export, batch export.
+**Free**: 4 looks, 1 imported LUT, 1600px exports with a small watermark, photos only.
+**Pro**: everything — all looks, **video (LUMA Motion)**, unlimited imports,
+full-resolution clean exports, the pro adjustment set, `.cube` export, batch export.
+
+### Regional pricing
+
+Prices render in the customer's currency, never as hardcoded dollars.
+`src/pricing.js` detects the region from the browser locale, maps it to a
+currency, and formats a published **price point** for that currency with
+`Intl.NumberFormat` — round local prices (¥800, ₹399, R$27,90), not a live FX
+conversion of a USD figure. Unknown regions fall back to USD.
+
+In production the store is authoritative: StoreKit returns
+`product.displayPrice` for the customer's storefront, and Stripe prices in their
+currency. The table exists because this demo build has neither.
 
 > The web build ships `LocalBillingAdapter`, which **simulates** the purchase in
 > `localStorage` and takes no payment. The paywall says so on screen.

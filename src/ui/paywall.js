@@ -1,4 +1,5 @@
-import { billing, PLANS } from '../billing.js';
+import { billing, PLANS, priceOf, subtitleOf } from '../billing.js';
+import { pricing } from '../pricing.js';
 import { toast, haptic } from './ui.js';
 
 /** The subscription screen: plan picker, purchase, restore. */
@@ -42,9 +43,9 @@ export class Paywall {
         <span class="radio"></span>
         <span class="plan-main">
           <span class="plan-t">${plan.title}</span>
-          <span class="plan-s">${plan.sub}</span>
+          <span class="plan-s">${subtitleOf(plan)}</span>
         </span>
-        <span class="plan-price"><span class="p">${plan.price}</span><span class="u">${plan.unit}</span></span>
+        <span class="plan-price"><span class="p">${priceOf(plan)}</span><span class="u">${plan.unit}</span></span>
         ${plan.tag ? `<span class="tagline">${plan.tag}</span>` : ''}`;
       btn.addEventListener('click', () => {
         this.selected = plan.id;
@@ -58,15 +59,17 @@ export class Paywall {
 
   #syncCta() {
     const plan = billing.planById(this.selected);
+    const price = priceOf(plan);
     const trialAvailable = !!plan.trialDays && !localStorage.getItem('luma:trialUsed');
     this.cta.textContent = trialAvailable
       ? `Start ${plan.trialDays}-day free trial`
-      : plan.periodDays == null ? `Buy Lifetime — ${plan.price}` : `Subscribe — ${plan.price}${plan.unit}`;
+      : plan.periodDays == null ? `Buy Lifetime — ${price}` : `Subscribe — ${price}${plan.unit}`;
     this.fine.textContent = trialAvailable && plan.periodDays
-      ? `Free for ${plan.trialDays} days, then ${plan.price}${plan.unit}. Cancel any time.`
+      ? `Free for ${plan.trialDays} days, then ${price}${plan.unit}. Cancel any time.`
       : plan.periodDays == null
         ? 'One payment. No subscription.'
-        : `${plan.price}${plan.unit}, renews automatically. Cancel any time.`;
+        : `${price}${plan.unit}, renews automatically. Cancel any time.`;
+    this.fine.textContent += ` Prices shown in ${pricing.currency}.`;
   }
 
   async #buy() {

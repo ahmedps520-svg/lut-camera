@@ -1,5 +1,5 @@
 /* LUMA service worker — offline shell. Photos and LUTs live in IndexedDB, not here. */
-const CACHE = 'luma-v1';
+const CACHE = 'luma-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,8 @@ const ASSETS = [
   './src/camera.js',
   './src/capture.js',
   './src/billing.js',
+  './src/pricing.js',
+  './src/video.js',
   './src/store.js',
   './src/gl/renderer.js',
   './src/gl/shaders.js',

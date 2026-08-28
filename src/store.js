@@ -3,9 +3,10 @@
  * Nothing is uploaded anywhere; there is no server in this app.
  */
 const DB_NAME = 'luma';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_LUTS = 'luts';
 const STORE_SHOTS = 'shots';
+const STORE_CLIPS = 'clips';
 
 let dbPromise = null;
 
@@ -21,6 +22,10 @@ function open() {
       if (!db.objectStoreNames.contains(STORE_SHOTS)) {
         const s = db.createObjectStore(STORE_SHOTS, { keyPath: 'id' });
         s.createIndex('createdAt', 'createdAt');
+      }
+      if (!db.objectStoreNames.contains(STORE_CLIPS)) {
+        const c = db.createObjectStore(STORE_CLIPS, { keyPath: 'id' });
+        c.createIndex('createdAt', 'createdAt');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -80,6 +85,28 @@ export async function getShot(id) {
 
 export async function deleteShot(id) {
   await tx(STORE_SHOTS, 'readwrite', (os) => os.delete(id));
+}
+
+/* ── Clips (Motion) ───────────────────────────────────────── */
+
+export async function saveClip(clip) {
+  await tx(STORE_CLIPS, 'readwrite', (os) => os.put(clip));
+  return clip;
+}
+
+export async function allClips() {
+  const db = await open();
+  const list = await req(db.transaction(STORE_CLIPS).objectStore(STORE_CLIPS).getAll());
+  return list.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function getClip(id) {
+  const db = await open();
+  return req(db.transaction(STORE_CLIPS).objectStore(STORE_CLIPS).get(id));
+}
+
+export async function deleteClip(id) {
+  await tx(STORE_CLIPS, 'readwrite', (os) => os.delete(id));
 }
 
 export async function estimateUsage() {

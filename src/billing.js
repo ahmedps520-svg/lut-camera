@@ -12,14 +12,13 @@
  *                           for the signed-in account.
  */
 import { prefs } from './store.js';
+import { pricing } from './pricing.js';
 
 export const PLANS = [
   {
     id: 'monthly',
     productId: 'app.luma.pro.monthly',
     title: 'Monthly',
-    sub: 'Cancel anytime',
-    price: '$4.99',
     unit: '/mo',
     trialDays: 7,
     periodDays: 30,
@@ -28,8 +27,6 @@ export const PLANS = [
     id: 'annual',
     productId: 'app.luma.pro.annual',
     title: 'Annual',
-    sub: '$2.50/mo — save 50%',
-    price: '$29.99',
     unit: '/yr',
     tag: 'BEST VALUE',
     trialDays: 7,
@@ -40,12 +37,25 @@ export const PLANS = [
     id: 'lifetime',
     productId: 'app.luma.pro.lifetime',
     title: 'Lifetime',
-    sub: 'One payment, yours forever',
-    price: '$79.99',
     unit: 'once',
     periodDays: null,
   },
 ];
+
+/**
+ * Prices are rendered in the customer's currency at display time — never
+ * stored as strings — because the storefront, not the app, decides what a plan
+ * costs. See `src/pricing.js`.
+ */
+export function priceOf(plan) { return pricing.price(plan.id); }
+
+export function subtitleOf(plan) {
+  switch (plan.id) {
+    case 'monthly': return 'Cancel anytime';
+    case 'annual': return `${pricing.perMonth('annual')}/mo — save ${pricing.savingsPercent()}%`;
+    default: return 'One payment, yours forever';
+  }
+}
 
 export const FREE_LIMITS = {
   imports: 1,              // custom .cube slots
@@ -151,6 +161,8 @@ class Billing extends EventTarget {
   /* ── gating helpers ─────────────────────────────────────── */
 
   canUseLook(preset) { return !!preset?.free || this.isPro; }
+  /** LUMA Motion — video is Pro-only. */
+  get canRecordVideo() { return this.isPro; }
   canImport(currentCount) { return this.isPro || currentCount < FREE_LIMITS.imports; }
   get watermark() { return !this.isPro && FREE_LIMITS.watermark; }
   get maxLongEdge() { return this.isPro ? Infinity : FREE_LIMITS.maxLongEdge; }

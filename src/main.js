@@ -7,6 +7,8 @@ import * as db from './store.js';
 import { prefs, uid } from './store.js';
 import { billing } from './billing.js';
 import { captureStill, exportToPhotos, downloadBlob, filenameFor } from './capture.js';
+import { VideoRecorder, formatDuration, MAX_CLIP_SECONDS } from './video.js';
+import { pricing } from './pricing.js';
 import { Sheets, toast, haptic, sliderRow, switchRow, actionRow } from './ui/ui.js';
 import { Paywall } from './ui/paywall.js';
 
@@ -33,6 +35,8 @@ const state = {
   grid: prefs.get('grid', false),
   torch: false,
   compare: false,
+  mode: 'photo',      // 'photo' | 'video'
+  recording: false,
   running: false,
   busy: false,
   frames: 0,          // rendered viewfinder frames — handy when chasing jank
@@ -48,6 +52,7 @@ const state = {
     autoExport: false,
     quality: 'max',
     liveThumbs: true,
+    recordAudio: true,
     ...prefs.get('settings', {}),
   },
 };
@@ -64,9 +69,13 @@ const dom = {
   adjustBody: el('adjustBody'), settingsBody: el('settingsBody'),
   fileInput: el('fileInput'), dropzone: el('dropzone'),
   viewer: el('viewer'), viewerImg: el('viewerImg'), viewerMeta: el('viewerMeta'),
+  viewerVideo: el('viewerVideo'),
+  modeSwitch: el('modeSwitch'), modeLock: el('modeLock'),
+  recHud: el('recHud'), recTime: el('recTime'),
 };
 
 const camera = new Camera();
+const recorder = new VideoRecorder();
 const sheets = new Sheets(el('scrim'));
 const paywall = new Paywall();
 
@@ -636,6 +645,19 @@ async function buildSettings() {
   }));
 
   mk(switchRow({
+    title: 'Record sound with video',
+    sub: 'Adds the microphone to Motion clips',
+    checked: state.settings.recordAudio,
+    badge: 'PRO',
+    onChange: (v) => {
+      state.settings.recordAudio = v;
+      saveSettings();
+      // turning it back on is an explicit ask — try the mic again
+      if (v) recorder.retryMic(); else recorder.releaseMic();
+    },
+  }));
+
+  mk(switchRow({
     title: 'Live look previews',
     sub: 'Render every look from the live frame',
     checked: state.settings.liveThumbs,
@@ -666,6 +688,17 @@ async function buildSettings() {
       const blob = new Blob([toCubeText(lut, look.name)], { type: 'text/plain' });
       downloadBlob(blob, `${look.name.replace(/[^\w-]+/g, '_')}.cube`);
       toast('LUT exported.');
+    },
+  }));
+
+  mk(actionRow({
+    title: 'Prices shown in',
+    sub: pricing.auto
+      ? 'Detected from your device region'
+      : 'Set manually for this device',
+    value: pricing.summary,
+    onClick: () => {
+      toast('On the App Store this follows your store account; here it follows your device region.', '', 3600);
     },
   }));
 
@@ -715,29 +748,49 @@ function saveSettings() { prefs.set('settings', state.settings); }
    Gallery
    ──────────────────────────────────────────────────────────── */
 
-let galleryShots = [];
+let galleryItems = [];
 
+/** Photos and clips share one roll, newest first. */
 async function refreshGallery() {
-  galleryShots = await db.allShots().catch(() => []);
-  dom.shotGrid.textContent = '';
-  dom.galleryEmpty.hidden = galleryShots.length > 0;
+  const [shots, clips] = await Promise.all([
+    db.allShots().catch(() => []),
+    db.allClips().catch(() => []),
+  ]);
+  galleryItems = [
+    ...shots.map((s) => ({ ...s, kind: 'photo' })),
+    ...clips.map((c) => ({ ...c, kind: 'clip' })),
+  ].sort((a, b) => b.createdAt - a.createdAt);
 
-  for (const shot of galleryShots) {
+  dom.shotGrid.textContent = '';
+  dom.galleryEmpty.hidden = galleryItems.length > 0;
+
+  for (const item of galleryItems) {
     const cell = document.createElement('button');
     cell.className = 'shot';
     const img = document.createElement('img');
-    img.src = shot.thumb;
-    img.alt = shot.look ? `Photo with ${shot.look}` : 'Photo';
+    img.src = item.thumb;
+    img.alt = `${item.kind === 'clip' ? 'Clip' : 'Photo'} with ${item.look || 'Neutral'}`;
     img.loading = 'lazy';
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = shot.look || 'Neutral';
+    tag.textContent = item.look || 'Neutral';
     cell.append(img, tag);
-    cell.addEventListener('click', () => openViewer(shot.id));
+
+    if (item.kind === 'clip') {
+      const play = document.createElement('span');
+      play.className = 'play';
+      play.textContent = '▶';
+      const dur = document.createElement('span');
+      dur.className = 'dur';
+      dur.textContent = formatDuration(item.duration || 0);
+      cell.append(play, dur);
+    }
+
+    cell.addEventListener('click', () => openViewer(item.id, item.kind));
     dom.shotGrid.appendChild(cell);
   }
 
-  const latest = galleryShots[0];
+  const latest = galleryItems[0];
   dom.lastShot.textContent = '';
   if (latest) {
     const img = document.createElement('img');
@@ -752,58 +805,84 @@ async function refreshGallery() {
 }
 
 let viewerId = null;
+let viewerKind = 'photo';
 let viewerUrl = null;
 
-async function openViewer(id) {
-  const shot = await db.getShot(id);
-  if (!shot) return;
+const loadItem = (id, kind) => (kind === 'clip' ? db.getClip(id) : db.getShot(id));
+
+async function openViewer(id, kind = 'photo') {
+  const item = await loadItem(id, kind);
+  if (!item) return;
   viewerId = id;
+  viewerKind = kind;
   if (viewerUrl) URL.revokeObjectURL(viewerUrl);
-  viewerUrl = URL.createObjectURL(shot.blob);
-  dom.viewerImg.src = viewerUrl;
-  const when = new Date(shot.createdAt);
-  dom.viewerMeta.textContent = `${shot.look || 'Neutral'} · ${shot.width}×${shot.height} · ${when.toLocaleDateString()}`;
+  viewerUrl = URL.createObjectURL(item.blob);
+
+  const isClip = kind === 'clip';
+  dom.viewerImg.hidden = isClip;
+  dom.viewerVideo.hidden = !isClip;
+  if (isClip) {
+    dom.viewerVideo.src = viewerUrl;
+    dom.viewerVideo.load();
+  } else {
+    dom.viewerImg.src = viewerUrl;
+  }
+
+  const when = new Date(item.createdAt);
+  dom.viewerMeta.textContent = isClip
+    ? `${item.look || 'Neutral'} · ${formatDuration(item.duration || 0)} · ${when.toLocaleDateString()}`
+    : `${item.look || 'Neutral'} · ${item.width}×${item.height} · ${when.toLocaleDateString()}`;
+  el('viewerSave').textContent = isClip ? 'Save to Photos' : 'Save to Photos';
   dom.viewer.hidden = false;
 }
 
 function closeViewer() {
   dom.viewer.hidden = true;
+  dom.viewerVideo.pause?.();
+  dom.viewerVideo.removeAttribute('src');
   if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
   viewerId = null;
+}
+
+function nameFor(item) {
+  const base = filenameFor(item.look, new Date(item.createdAt));
+  return item.kind === 'clip' || item.duration != null
+    ? base.replace(/\.jpg$/, '.' + VideoRecorder.extensionFor(item.mimeType || ''))
+    : base;
 }
 
 function wireViewer() {
   el('viewerClose').addEventListener('click', closeViewer);
   el('viewerDelete').addEventListener('click', async () => {
     if (!viewerId) return;
-    await db.deleteShot(viewerId);
+    if (viewerKind === 'clip') await db.deleteClip(viewerId); else await db.deleteShot(viewerId);
     closeViewer();
     await refreshGallery();
-    toast('Photo deleted.');
+    toast(viewerKind === 'clip' ? 'Clip deleted.' : 'Photo deleted.');
   });
   el('viewerSave').addEventListener('click', async () => {
-    const shot = await db.getShot(viewerId);
-    if (!shot) return;
-    const res = await exportToPhotos(shot.blob, filenameFor(shot.look, new Date(shot.createdAt)));
-    if (res === 'shared') toast('Sent to the share sheet — choose Save Image.', 'gold', 3000);
-    else if (res === 'downloaded') toast('Downloaded. On iPhone, tap Save Image to add it to Photos.', '', 3400);
+    const item = await loadItem(viewerId, viewerKind);
+    if (!item) return;
+    const res = await exportToPhotos(item.blob, nameFor({ ...item, kind: viewerKind }));
+    if (res === 'shared') toast('Sent to the share sheet — choose Save Video or Save Image.', 'gold', 3200);
+    else if (res === 'downloaded') toast('Downloaded. On iPhone, long-press to save it to Photos.', '', 3400);
   });
   el('viewerDownload').addEventListener('click', async () => {
-    const shot = await db.getShot(viewerId);
-    if (shot) downloadBlob(shot.blob, filenameFor(shot.look, new Date(shot.createdAt)));
+    const item = await loadItem(viewerId, viewerKind);
+    if (item) downloadBlob(item.blob, nameFor({ ...item, kind: viewerKind }));
   });
   el('btnSaveAll').addEventListener('click', async () => {
-    if (!galleryShots.length) { toast('Nothing to export yet.'); return; }
-    if (!billing.isPro && galleryShots.length > 3) {
+    if (!galleryItems.length) { toast('Nothing to export yet.'); return; }
+    if (!billing.isPro && galleryItems.length > 3) {
       paywall.open('Batch export is part of LUMA Pro');
       return;
     }
-    for (const s of galleryShots) {
-      const shot = await db.getShot(s.id);
-      downloadBlob(shot.blob, filenameFor(shot.look, new Date(shot.createdAt)));
+    for (const entry of galleryItems) {
+      const item = await loadItem(entry.id, entry.kind);
+      if (item) downloadBlob(item.blob, nameFor({ ...item, kind: entry.kind }));
       await new Promise((r) => setTimeout(r, 220));
     }
-    toast(`Exported ${galleryShots.length} photo(s).`);
+    toast(`Exported ${galleryItems.length} item(s).`);
   });
 }
 
@@ -813,6 +892,11 @@ function wireViewer() {
 
 async function shoot() {
   if (!state.running || state.busy) return;
+  if (state.mode === 'video') {
+    if (state.recording) await stopRecording();
+    else await startRecording();
+    return;
+  }
   const seconds = TIMERS[state.timerIndex];
   if (seconds) await runCountdown(seconds);
   await doCapture();
@@ -894,6 +978,134 @@ async function doCapture() {
   } finally {
     state.busy = false;
     dom.shutter.disabled = false;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────
+   Motion — video recorded off the graded canvas
+   ──────────────────────────────────────────────────────────── */
+
+let recTimer = 0;
+
+function setMode(mode) {
+  if (state.recording) return;
+  if (mode === 'video') {
+    if (!VideoRecorder.supported) {
+      toast('This browser cannot record video.', 'bad');
+      return;
+    }
+    if (!billing.canRecordVideo) {
+      haptic(14);
+      paywall.open('LUMA Motion — video is part of Pro');
+      return;
+    }
+  }
+  state.mode = mode;
+  syncModeUI();
+  haptic(6);
+
+  // Ask for the mic on entering video mode, not on the record tap.
+  if (mode === 'video' && state.settings.recordAudio) recorder.warmUpMic();
+  if (mode === 'photo') recorder.releaseMic();
+}
+
+function syncModeUI() {
+  for (const btn of dom.modeSwitch.children) {
+    const on = btn.dataset.mode === state.mode;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', String(on));
+  }
+  dom.modeLock.hidden = billing.isPro;
+  dom.modeSwitch.hidden = !VideoRecorder.supported;
+  dom.shutter.classList.toggle('video', state.mode === 'video');
+  dom.shutter.setAttribute(
+    'aria-label',
+    state.mode === 'video' ? (state.recording ? 'Stop recording' : 'Record') : 'Capture'
+  );
+}
+
+/** A still off the offscreen renderer — the live canvas can't be read back. */
+async function grabClipThumb() {
+  try {
+    await ensureUploaded(thumbs, state.lookId, THUMB_LUT_SIZE);
+    const aspect = ratio().value;
+    const w = 320;
+    const h = Math.round(w / aspect);
+    thumbs.uploadFrame(camera.video, camera.video.videoWidth, camera.video.videoHeight);
+    const gl = thumbs.renderTo(w, h, { aspect, zoom: state.zoom, mirror: camera.isFront,
+                                       lutId: state.lookId, mix: state.mix, grain: 0 });
+    const flat = document.createElement('canvas');
+    flat.width = w; flat.height = h;
+    flat.getContext('2d').drawImage(gl, 0, 0);
+    return flat.toDataURL('image/jpeg', 0.7);
+  } catch {
+    return '';
+  }
+}
+
+async function startRecording() {
+  if (!billing.canRecordVideo) { paywall.open('LUMA Motion — video is part of Pro'); return; }
+  try {
+    const { audio } = await recorder.start(dom.preview, {
+      audio: state.settings.recordAudio,
+      maxSeconds: MAX_CLIP_SECONDS,
+    });
+    recorder.onAutoStop = () => {
+      toast(`Clips are capped at ${Math.round(MAX_CLIP_SECONDS / 60)} minutes.`);
+      stopRecording();
+    };
+    state.recording = true;
+    dom.shutter.classList.add('recording');
+    dom.recHud.hidden = false;
+    dom.recTime.textContent = '0:00';
+    syncModeUI();
+    haptic([16, 40, 16]);
+    if (state.settings.recordAudio && !audio) {
+      toast('Recording without sound — microphone unavailable.');
+    }
+
+    clearInterval(recTimer);
+    recTimer = setInterval(() => {
+      dom.recTime.textContent = formatDuration(recorder.elapsed);
+    }, 250);
+  } catch (err) {
+    toast(err.message || 'Could not start recording.', 'bad');
+  }
+}
+
+async function stopRecording() {
+  if (!state.recording) return;
+  clearInterval(recTimer);
+  state.recording = false;
+  dom.shutter.classList.remove('recording');
+  dom.recHud.hidden = true;
+  dom.shutter.disabled = true;
+
+  try {
+    const thumb = await grabClipThumb();
+    const { blob, mimeType, duration } = await recorder.stop();
+    if (!blob.size) { toast('Nothing was recorded.', 'bad'); return; }
+
+    const record = {
+      id: uid(),
+      blob,
+      thumb,
+      mimeType,
+      duration,
+      look: currentLook()?.name || 'Neutral',
+      width: dom.preview.width,
+      height: dom.preview.height,
+      createdAt: Date.now(),
+    };
+    await db.saveClip(record);
+    await refreshGallery();
+    haptic(10);
+    toast(`Clip saved · ${formatDuration(duration)}`, 'gold');
+  } catch (err) {
+    toast(err.message || 'Recording failed.', 'bad');
+  } finally {
+    dom.shutter.disabled = false;
+    syncModeUI();
   }
 }
 
@@ -1068,7 +1280,13 @@ function wireChrome() {
     e.currentTarget.classList.toggle('on', s > 0);
   });
 
+  for (const btn of dom.modeSwitch.children) {
+    btn.addEventListener('click', () => setMode(btn.dataset.mode));
+  }
+
   el('btnRatio').addEventListener('click', () => {
+    // the recorder is bound to the canvas size — don't resize mid-take
+    if (state.recording) { toast('Framing is locked while recording.'); return; }
     state.ratioIndex = (state.ratioIndex + 1) % RATIOS.length;
     prefs.set('ratio', ratio().id);
     el('ratioLabel').textContent = ratio().label;
@@ -1127,7 +1345,12 @@ function wireChrome() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { camera.stop(); state.running = false; }
+    if (document.hidden) {
+      if (state.recording) stopRecording();
+      camera.stop();
+      recorder.releaseMic();
+      state.running = false;
+    }
     else if (!state.running && prefs.get('cameraStarted', false)) startCamera();
   });
 
@@ -1139,6 +1362,8 @@ function syncProChip() {
   const pro = billing.isPro;
   dom.btnPro.classList.toggle('active', pro);
   dom.proLabel.textContent = pro ? (billing.entitlement?.trial ? 'TRIAL' : 'PRO') : 'PRO';
+  if (!pro && state.mode === 'video') state.mode = 'photo';
+  syncModeUI();
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -1179,6 +1404,7 @@ async function boot() {
 
   buildFilmstrip();
   buildAdjust();
+  syncModeUI();
   wireChrome();
   wireImport();
   wireViewer();
@@ -1201,7 +1427,9 @@ async function boot() {
 
   // Test/debug hook — opt-in via ?debug so it never ships enabled by default.
   if (new URLSearchParams(location.search).has('debug')) {
-    window.__luma = { state, camera, preview, thumbs, looks, billing, sheets, paywall, refreshThumbs };
+    window.__luma = { state, camera, preview, thumbs, looks, billing, sheets, paywall,
+                      pricing, recorder, refreshThumbs,
+                      shoot, startRecording, stopRecording, setMode };
   }
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

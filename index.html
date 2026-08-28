@@ -37,6 +37,11 @@
 
       <div class="countdown" id="countdown" hidden></div>
 
+      <div class="rec-hud" id="recHud" hidden>
+        <span class="rec-dot"></span>
+        <span class="rec-time" id="recTime">0:00</span>
+      </div>
+
       <!-- Camera not started / denied -->
       <div class="gate" id="gate">
         <div class="gate-inner">
@@ -86,6 +91,14 @@
 
       <div class="filmstrip-wrap">
         <div class="filmstrip" id="filmstrip" role="tablist" aria-label="Looks"></div>
+      </div>
+
+      <div class="modeswitch" id="modeSwitch" role="tablist" aria-label="Capture mode">
+        <button class="mode on" data-mode="photo" role="tab" aria-selected="true">PHOTO</button>
+        <button class="mode" data-mode="video" role="tab" aria-selected="false">
+          VIDEO
+          <svg viewBox="0 0 24 24" class="mode-lock" id="modeLock" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>
+        </button>
       </div>
 
       <div class="actionbar">
@@ -197,7 +210,10 @@
       <svg viewBox="0 0 24 24" class="ico stroke"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 12.5h9L17.5 7"/></svg>
     </button>
   </header>
-  <div class="viewer-body"><img id="viewerImg" alt="Captured photo" /></div>
+  <div class="viewer-body">
+    <img id="viewerImg" alt="Captured photo" />
+    <video id="viewerVideo" playsinline controls hidden></video>
+  </div>
   <footer class="viewer-foot">
     <button class="btn btn-primary" id="viewerSave">Save to Photos</button>
     <button class="btn btn-ghost" id="viewerDownload">Download</button>
@@ -213,12 +229,13 @@
       <svg viewBox="0 0 24 24" width="34" height="34"><path d="m12 2 2.9 6.1 6.6.9-4.8 4.6 1.2 6.6L12 17.1 6.1 20.2l1.2-6.6L2.5 9l6.6-.9L12 2Z"/></svg>
     </div>
     <h2 class="paywall-title">LUMA Pro</h2>
-    <p class="paywall-sub">The full colour lab — every look, unlimited imports, clean exports at full resolution.</p>
+    <p class="paywall-sub">The full colour lab — every look, video, unlimited imports and clean exports at full resolution.</p>
 
     <ul class="perks">
       <li><b>32 signature looks</b><span>Film stocks, cinema grades and mono emulsions, tuned by hand.</span></li>
       <li><b>Unlimited .cube imports</b><span>Bring your own LUTs from Resolve, Lightroom or your colourist.</span></li>
       <li><b>Clean full-resolution export</b><span>No watermark, maximum sensor resolution, straight to Photos.</span></li>
+      <li><b>LUMA Motion — video</b><span>Record clips with the look, grain and grade baked into the file.</span></li>
       <li><b>Pro controls</b><span>Grain, halation, split-tone, curve and white-balance fine tuning.</span></li>
     </ul>
 
