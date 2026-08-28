@@ -50,7 +50,7 @@
           </div>
           <h1 class="gate-title">LUMA</h1>
           <p class="gate-sub" id="gateSub">Cinematic colour, live in your viewfinder.</p>
-          <button class="btn btn-primary" id="startCam">Enable Camera</button>
+          <button class="btn btn-primary" id="startCam" data-sfx="success">Enable Camera</button>
           <button class="btn btn-ghost" id="gateGallery">Open Library</button>
           <p class="gate-fine">Video never leaves your device. Frames are graded on-device with WebGL.</p>
         </div>
@@ -82,7 +82,7 @@
     </div>
 
     <!-- ───────────────────────── CONTROLS ───────────────────────── -->
-    <div class="controls">
+    <div class="controls" id="controls">
       <div class="strength" id="strengthWrap">
         <span class="strength-name" id="lutName">Neutral</span>
         <input type="range" id="strength" min="0" max="100" value="100" class="range" aria-label="LUT intensity" />
@@ -106,7 +106,7 @@
           <span class="thumb-frame" id="lastShot"><span class="thumb-empty"></span></span>
         </button>
 
-        <button class="shutter" id="shutter" aria-label="Capture"><span class="shutter-in"></span></button>
+        <button class="shutter" id="shutter" aria-label="Capture" data-sfx="none"><span class="shutter-in"></span></button>
 
         <button class="round ghost" id="btnFlip" aria-label="Switch camera">
           <svg viewBox="0 0 24 24" class="ico stroke"><path d="M4 8h3l1.6-2.4h6.8L17 8h3v11H4z"/><path d="M9.5 13.5a2.5 2.5 0 0 1 4.6-1.4M14.5 13.5a2.5 2.5 0 0 1-4.6 1.4"/><path d="m9.2 11-1 1.4 1.7.3M14.8 16l1-1.4-1.7-.3"/></svg>
@@ -144,7 +144,7 @@
   <header class="sheet-head">
     <h2>Looks</h2>
     <div class="sheet-actions">
-      <button class="btn btn-small" id="btnImport">Import .cube</button>
+      <button class="btn btn-small" id="btnImport" data-sfx="tab">Import .cube</button>
       <button class="icon-btn" data-close aria-label="Close">✕</button>
     </div>
   </header>
@@ -241,7 +241,7 @@
 
     <div class="plans" id="plans"></div>
 
-    <button class="btn btn-primary btn-lg" id="btnSubscribe">Start 7-day free trial</button>
+    <button class="btn btn-primary btn-lg" id="btnSubscribe" data-sfx="none">Start 7-day free trial</button>
     <p class="paywall-fine" id="planFine"></p>
     <div class="paywall-links">
       <button class="link" id="btnRestore">Restore purchases</button>

@@ -82,7 +82,7 @@ export class Paywall {
       haptic([10, 40, 10]);
       toast(billing.entitlement.trial ? 'Trial started — everything is unlocked.' : 'Welcome to LUMA Pro.', 'gold');
       this.close();
-      this.onUnlock?.();
+      this.onUnlock?.({ restored: false });
     } catch (err) {
       toast(err.message || 'Purchase failed.', 'bad');
     } finally {
@@ -97,7 +97,7 @@ export class Paywall {
     if (ent && billing.isPro) {
       toast('Purchases restored.', 'gold');
       this.close();
-      this.onUnlock?.();
+      this.onUnlock?.({ restored: true });
     } else {
       toast('No previous purchase found on this device.');
     }

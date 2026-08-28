@@ -11,6 +11,8 @@ import { VideoRecorder, formatDuration, MAX_CLIP_SECONDS } from './video.js';
 import { pricing } from './pricing.js';
 import { Sheets, toast, haptic, sliderRow, switchRow, actionRow } from './ui/ui.js';
 import { Paywall } from './ui/paywall.js';
+import { sfx, cueFor } from './sfx.js';
+import { celebrate } from './ui/celebrate.js';
 
 /* ────────────────────────────────────────────────────────────
    State
@@ -53,6 +55,7 @@ const state = {
     quality: 'max',
     liveThumbs: true,
     recordAudio: true,
+    sound: true,
     ...prefs.get('settings', {}),
   },
 };
@@ -60,6 +63,7 @@ const state = {
 const el = (id) => document.getElementById(id);
 const dom = {
   frame: el('frame'), preview: el('preview'), gate: el('gate'), gateSub: el('gateSub'),
+  stage: el('stage'), controls: el('controls'),
   topbar: el('topbar'), grid: el('gridOverlay'), focus: el('focusRing'), flash: el('shutterFlash'),
   compare: el('compareBadge'), countdown: el('countdown'),
   filmstrip: el('filmstrip'), lutName: el('lutName'), strength: el('strength'), strengthVal: el('strengthVal'),
@@ -138,27 +142,32 @@ async function ensureUploaded(renderer, id, size) {
 
 let lastBox = '';
 
-/** Letterbox the canvas to the selected aspect inside the frame. */
+/**
+ * Size the viewfinder to the selected aspect.
+ *
+ * Measured against the stage and the control block rather than the frame
+ * itself, so setting the frame's size can't feed back into the measurement.
+ */
 function syncFrameBox() {
+  const stage = dom.stage.getBoundingClientRect();
+  const controls = dom.controls.getBoundingClientRect();
+  if (!stage.width) return;
+
+  const availW = Math.max(1, stage.width - 20);
+  const availH = Math.max(1, stage.height - controls.height - 6);
   const r = ratio().value;
-  const box = dom.frame.getBoundingClientRect();
-  if (!box.width) return;
+
+  let w = availW;
+  let h = availW / r;
+  if (h > availH) { h = availH; w = availH * r; }
+
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-  let w = box.width, h = box.width / r;
-  if (h > box.height) { h = box.height; w = box.height * r; }
-
-  // runs every frame — don't touch style unless something actually moved
-  const sig = `${w.toFixed(2)}x${h.toFixed(2)}@${box.width.toFixed(2)},${box.height.toFixed(2)},${dpr}`;
+  const sig = `${w.toFixed(2)}x${h.toFixed(2)}@${dpr}`;
   if (sig === lastBox) return;
   lastBox = sig;
 
-  dom.preview.style.width = w + 'px';
-  dom.preview.style.height = h + 'px';
-  dom.preview.style.left = ((box.width - w) / 2) + 'px';
-  dom.preview.style.top = ((box.height - h) / 2) + 'px';
-  dom.preview.style.right = 'auto';
-  dom.preview.style.bottom = 'auto';
+  dom.frame.style.width = w + 'px';
+  dom.frame.style.height = h + 'px';
   preview.resize(w * dpr, h * dpr);
 }
 
@@ -376,6 +385,7 @@ async function selectLook(id) {
   if (!look) return;
   if (!billing.canUseLook(look)) {
     haptic(14);
+    sfx.play('lock');
     paywall.open(`“${look.name}” is part of LUMA Pro`);
     return;
   }
@@ -436,6 +446,7 @@ function buildLutGrid() {
         if (state.lookId === look.id) await selectLook('neutral');
         await loadLooks();
         rebuildLookUI();
+        sfx.play('delete');
         toast(`Removed “${look.name}”.`);
       });
       pane.appendChild(del);
@@ -497,8 +508,10 @@ async function importFiles(fileList) {
       await loadLooks();
       rebuildLookUI();
       await selectLook(id);
+      sfx.play('success');
       toast(`Imported “${lut.title}” · ${lut.size}³`, 'gold');
     } catch (err) {
+      sfx.play('error');
       toast(err instanceof LutParseError ? err.message : `Could not read ${file.name}.`, 'bad', 3200);
     }
   }
@@ -642,6 +655,17 @@ async function buildSettings() {
     sub: 'Jump straight to Save to Photos',
     checked: state.settings.autoExport,
     onChange: (v) => { state.settings.autoExport = v; saveSettings(); },
+  }));
+
+  mk(switchRow({
+    title: 'Sound effects',
+    sub: 'Shutter, ticks and cues throughout the app',
+    checked: state.settings.sound,
+    onChange: (v) => {
+      state.settings.sound = v;
+      saveSettings();
+      sfx.setEnabled(v);
+    },
   }));
 
   mk(switchRow({
@@ -856,6 +880,7 @@ function wireViewer() {
   el('viewerDelete').addEventListener('click', async () => {
     if (!viewerId) return;
     if (viewerKind === 'clip') await db.deleteClip(viewerId); else await db.deleteShot(viewerId);
+    sfx.play('delete');
     closeViewer();
     await refreshGallery();
     toast(viewerKind === 'clip' ? 'Clip deleted.' : 'Photo deleted.');
@@ -912,6 +937,7 @@ function runCountdown(seconds) {
       void dom.countdown.offsetWidth;
       dom.countdown.classList.add('tick');
       haptic(10);
+      sfx.play('timer');
       n--;
       if (n < 0) {
         clearInterval(timer);
@@ -931,6 +957,7 @@ async function doCapture() {
   void dom.flash.offsetWidth;
   dom.flash.classList.add('fire');
   haptic([12, 30, 8]);
+  sfx.play('shutter');
 
   try {
     const look = currentLook();
@@ -962,6 +989,7 @@ async function doCapture() {
     };
     await db.saveShot(record);
     await refreshGallery();
+    sfx.play('success');
 
     if (state.settings.autoExport) {
       const res = await exportToPhotos(record.blob, filenameFor(record.look));
@@ -974,6 +1002,7 @@ async function doCapture() {
     }
   } catch (err) {
     console.error(err);
+    sfx.play('error');
     toast('Capture failed: ' + (err.message || err), 'bad');
   } finally {
     state.busy = false;
@@ -996,6 +1025,7 @@ function setMode(mode) {
     }
     if (!billing.canRecordVideo) {
       haptic(14);
+      sfx.play('lock');
       paywall.open('LUMA Motion — video is part of Pro');
       return;
     }
@@ -1054,6 +1084,8 @@ async function startRecording() {
       toast(`Clips are capped at ${Math.round(MAX_CLIP_SECONDS / 60)} minutes.`);
       stopRecording();
     };
+    sfx.play('recordStart');
+    sfx.muted = true;               // UI cues would bleed into the microphone
     state.recording = true;
     dom.shutter.classList.add('recording');
     dom.recHud.hidden = false;
@@ -1076,6 +1108,8 @@ async function startRecording() {
 async function stopRecording() {
   if (!state.recording) return;
   clearInterval(recTimer);
+  sfx.muted = false;
+  sfx.play('recordStop');
   state.recording = false;
   dom.shutter.classList.remove('recording');
   dom.recHud.hidden = true;
@@ -1100,8 +1134,10 @@ async function stopRecording() {
     await db.saveClip(record);
     await refreshGallery();
     haptic(10);
+    sfx.play('success');
     toast(`Clip saved · ${formatDuration(duration)}`, 'gold');
   } catch (err) {
+    sfx.play('error');
     toast(err.message || 'Recording failed.', 'bad');
   } finally {
     dom.shutter.disabled = false;
@@ -1149,6 +1185,18 @@ async function flipCamera() {
   } finally { state.busy = false; }
 }
 
+function setRatio(index) {
+  state.ratioIndex = index;
+  prefs.set('ratio', ratio().id);
+  el('ratioLabel').textContent = ratio().label;
+  dom.frame.dataset.ratio = ratio().id;
+  dom.frame.classList.remove('ratio-change');
+  void dom.frame.offsetWidth;
+  dom.frame.classList.add('ratio-change');
+  syncFrameBox();
+  drawPreview();
+}
+
 function syncZoomRail() {
   for (const b of dom.zoomRail.children) {
     b.classList.toggle('on', Math.abs(Number(b.dataset.zoom) - state.zoom) < 0.05);
@@ -1165,7 +1213,13 @@ function wireViewfinderGestures() {
   const frame = dom.frame;
   let pinchStart = 0, zoomStart = 1, holdTimer = 0, moved = false, startPt = null;
 
+  // the top bar, zoom rail and gate sit inside the frame — a tap on those is
+  // not a tap on the image
+  const isChrome = (target) =>
+    !!target?.closest?.('.topbar, .zoomrail, .gate, .rec-hud, .countdown');
+
   frame.addEventListener('touchstart', (e) => {
+    if (isChrome(e.target)) { startPt = null; return; }
     if (e.touches.length === 2) {
       pinchStart = distance(e.touches);
       zoomStart = state.zoom;
@@ -1187,6 +1241,7 @@ function wireViewfinderGestures() {
   }, { passive: true });
 
   frame.addEventListener('touchend', (e) => {
+    if (isChrome(e.target)) return;
     clearTimeout(holdTimer);
     if (state.compare) { setCompare(false); return; }
     pinchStart = 0;
@@ -1197,10 +1252,14 @@ function wireViewfinderGestures() {
   });
 
   // Desktop: click to focus, press-and-hold to compare
-  frame.addEventListener('mousedown', () => { holdTimer = setTimeout(() => setCompare(true), 320); });
+  frame.addEventListener('mousedown', (e) => {
+    if (isChrome(e.target)) return;
+    holdTimer = setTimeout(() => setCompare(true), 320);
+  });
   frame.addEventListener('mouseup', (e) => {
     clearTimeout(holdTimer);
     if (state.compare) { setCompare(false); return; }
+    if (isChrome(e.target)) return;
     tapToFocus(e.clientX, e.clientY);
   });
   frame.addEventListener('mouseleave', () => { clearTimeout(holdTimer); setCompare(false); });
@@ -1218,6 +1277,7 @@ function distance(touches) {
 
 function setZoom(z) {
   state.zoom = Math.min(6, Math.max(1, z));
+  sfx.play('zoom', { throttle: 120 });
   syncZoomRail();
   camera.setZoom(state.zoom);   // native when the track supports it, digital otherwise
 }
@@ -1241,6 +1301,7 @@ function tapToFocus(clientX, clientY) {
   dom.focus.style.animation = 'none';
   void dom.focus.offsetWidth;
   dom.focus.style.animation = '';
+  sfx.play('focus');
   clearTimeout(tapToFocus._t);
   tapToFocus._t = setTimeout(() => { dom.focus.hidden = true; }, 1200);
   camera.focusAt(x, y);
@@ -1250,6 +1311,35 @@ function tapToFocus(clientX, clientY) {
 /* ────────────────────────────────────────────────────────────
    Chrome wiring
    ──────────────────────────────────────────────────────────── */
+
+/**
+ * Sound is wired once, by delegation: every button, look, card, chip and tab
+ * gets a cue without 40 individual listeners. `data-sfx` overrides the default,
+ * and `data-sfx="none"` leaves it to the code that knows the outcome (a toggle
+ * needs to know which way it went; the shutter fires with the shutter, not the
+ * touch).
+ */
+function wireSound() {
+  const onDown = (event) => {
+    sfx.unlock();                       // iOS: the first gesture starts audio
+    const target = event.target?.closest?.(
+      'button, .look, .lut-card, .shot, .plan, .seg, .tab, .chip, .mode, .zoom, [data-sfx]'
+    );
+    if (!target || target.disabled) return;
+    const cue = cueFor(target);
+    if (cue && cue !== 'none') sfx.play(cue);
+  };
+  document.addEventListener('pointerdown', onDown, { passive: true, capture: true });
+  // pointer events don't fire for keyboard activation
+  document.addEventListener('keydown', () => sfx.unlock(), { passive: true, once: true });
+
+  document.addEventListener('input', (event) => {
+    if (event.target?.type === 'range') sfx.play('slider', { throttle: 55 });
+  }, { passive: true, capture: true });
+
+  sheets.on('open', () => sfx.play('sheetOpen'));
+  sheets.on('close', () => sfx.play('sheetClose'));
+}
 
 function wireChrome() {
   el('startCam').addEventListener('click', startCamera);
@@ -1287,11 +1377,7 @@ function wireChrome() {
   el('btnRatio').addEventListener('click', () => {
     // the recorder is bound to the canvas size — don't resize mid-take
     if (state.recording) { toast('Framing is locked while recording.'); return; }
-    state.ratioIndex = (state.ratioIndex + 1) % RATIOS.length;
-    prefs.set('ratio', ratio().id);
-    el('ratioLabel').textContent = ratio().label;
-    dom.frame.dataset.ratio = ratio().id;
-    syncFrameBox();
+    setRatio((state.ratioIndex + 1) % RATIOS.length);
   });
 
   for (const b of dom.zoomRail.children) {
@@ -1405,13 +1491,22 @@ async function boot() {
   buildFilmstrip();
   buildAdjust();
   syncModeUI();
+  sfx.enabled = state.settings.sound;
+  wireSound();
   wireChrome();
   wireImport();
   wireViewer();
   wireViewfinderGestures();
   await refreshGallery();
 
-  paywall.onUnlock = () => { syncProChip(); rebuildLookUI(); buildAdjust(); };
+  paywall.onUnlock = ({ restored = false } = {}) => {
+    syncProChip();
+    rebuildLookUI();
+    buildAdjust();
+    sfx.play('purchase');
+    haptic([12, 40, 12, 40, 24]);
+    celebrate({ title: restored ? 'PRO RESTORED' : 'LUMA PRO' });
+  };
 
   await ensureUploaded(preview, state.lookId, PREVIEW_LUT_SIZE).catch(() => {});
   syncFrameBox();
@@ -1428,8 +1523,8 @@ async function boot() {
   // Test/debug hook — opt-in via ?debug so it never ships enabled by default.
   if (new URLSearchParams(location.search).has('debug')) {
     window.__luma = { state, camera, preview, thumbs, looks, billing, sheets, paywall,
-                      pricing, recorder, refreshThumbs,
-                      shoot, startRecording, stopRecording, setMode };
+                      pricing, recorder, refreshThumbs, sfx, celebrate,
+                      shoot, startRecording, stopRecording, setMode, setRatio };
   }
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

@@ -20,7 +20,8 @@ no backend — every frame is processed on-device in WebGL2.
 | **Adjustments** | Exposure, contrast, fade, saturation, temperature, tint, clarity, grain, halation, vignette — all in the same shader pass. |
 | **LUMA Motion (Pro)** | Record video straight off the graded canvas — the look, grain and grade are baked into the file, not applied afterwards. Optional microphone audio. |
 | **Export to Photos** | The native share sheet (`navigator.share` with files) → **Save Image / Save Video** on iOS. Falls back to a download elsewhere. |
-| **Subscription** | Free tier + LUMA Pro, with a real entitlement flow behind a swappable billing adapter. |
+| **Sound** | Every control has a cue — shutter, focus beeps, look ticks, sheet whooshes, record start/stop, a purchase fanfare — all synthesised in Web Audio, so there are no audio files to load. Muted automatically while recording so nothing bleeds into the mic. |
+| **Subscription** | Free tier + LUMA Pro, with a real entitlement flow behind a swappable billing adapter, and a confetti moment when Pro unlocks. |
 | **Offline / installable** | PWA with a service worker. Add to Home Screen for a full-screen, chrome-free camera. |
 
 Camera extras: 3:4 / 1:1 / 9:16 / 2.39 framing, pinch and rail zoom, tap to focus,
@@ -45,12 +46,15 @@ full-bleed into the safe areas, with no browser chrome.
 ### Tests
 
 ```bash
-node test/pricing.mjs     # regional pricing: mapping, formatting, price points
-node test/features.mjs    # paywall currency per locale + Motion (video) end to end
-node test/smoke.mjs       # the full camera flow, in a real browser
+node test/pricing.mjs      # regional pricing: mapping, formatting, price points
+node test/interaction.mjs  # aspect-ratio framing, sound cues, the unlock celebration
+node test/features.mjs     # paywall currency per locale + Motion (video) end to end
+node test/smoke.mjs        # the full camera flow, in a real browser
 ```
 
-`smoke.mjs` drives the app in Chromium against a synthetic camera: boot,
+`interaction.mjs` measures the actual frame box at each aspect ratio, spies on
+the sound cue names as it taps through the UI, and checks the confetti canvas
+really paints (36 checks). `smoke.mjs` drives the app in Chromium against a synthetic camera: boot,
 capture, look switching, LUT import, the free-tier limits, purchase, unlock, and
 the adjust / settings panels (37 checks). `features.mjs` opens the paywall under
 four locales and records a real clip as a Pro user (35 checks). `pricing.mjs` is
@@ -87,6 +91,20 @@ lut/cube.js  ─ parse ──┴──▶ 3D texture (RGBA8, trilinear)
   and a refusal is remembered rather than retried on every take.
 * **`src/pricing.js`** — region → currency → published price point, formatted
   with `Intl.NumberFormat`.
+* **`src/sfx.js`** — the cue sheet. Oscillators and filtered noise bursts with
+  short envelopes; one delegated `pointerdown` listener gives every button,
+  chip, look and tab a sound, and `data-sfx` overrides it where the code knows
+  better (a toggle needs to know which way it flipped).
+* **`src/ui/celebrate.js`** — the Pro unlock: three confetti cannons on a canvas
+  plus a wordmark, cleaning themselves up after ~3s. Honours
+  `prefers-reduced-motion`.
+
+### Framing
+
+The viewfinder frame takes the selected aspect ratio itself — it is sized in JS
+from the stage and control heights, so the border and corners hug the image
+instead of the image letterboxing inside a full-height box. Tap targets in the
+chrome (top bar, zoom rail) are excluded from tap-to-focus.
 * **`src/store.js`** — IndexedDB for shots and imported LUTs. Nothing leaves the device;
   there is no server in this app.
 

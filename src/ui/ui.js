@@ -1,4 +1,5 @@
 /** Small UI primitives: toasts, sheets, haptics. */
+import { sfx } from '../sfx.js';
 
 const host = () => document.getElementById('toastHost');
 
@@ -166,6 +167,7 @@ export function switchRow({ title, sub, checked, onChange, badge }) {
   }
   const sw = document.createElement('button');
   sw.className = 'switch';
+  sw.dataset.sfx = 'none';        // the handler knows which way it flipped
   sw.setAttribute('role', 'switch');
   sw.setAttribute('aria-checked', String(!!checked));
   sw.setAttribute('aria-label', title);
@@ -173,6 +175,7 @@ export function switchRow({ title, sub, checked, onChange, badge }) {
     const next = sw.getAttribute('aria-checked') !== 'true';
     sw.setAttribute('aria-checked', String(next));
     haptic(6);
+    sfx.play(next ? 'toggleOn' : 'toggleOff');
     onChange?.(next);
   });
   row.append(main, sw);
