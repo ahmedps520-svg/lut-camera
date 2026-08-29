@@ -168,7 +168,13 @@ function syncFrameBox() {
 
   dom.frame.style.width = w + 'px';
   dom.frame.style.height = h + 'px';
+  // The canvas is sized explicitly and centred, so while the frame animates to
+  // its new shape it *masks* the picture instead of stretching it — the
+  // aperture changes, the image doesn't.
+  dom.preview.style.width = w + 'px';
+  dom.preview.style.height = h + 'px';
   preview.resize(w * dpr, h * dpr);
+  movePills();
 }
 
 function drawPreview() {
@@ -392,7 +398,12 @@ async function selectLook(id) {
   state.lookId = id;
   prefs.set('lookId', id);
   haptic(6);
-  dom.lutName.textContent = look.name;
+  if (dom.lutName.textContent !== look.name) {
+    dom.lutName.textContent = look.name;
+    dom.lutName.classList.remove('swap');
+    void dom.lutName.offsetWidth;
+    dom.lutName.classList.add('swap');
+  }
   for (const b of dom.filmstrip.children) b.classList.toggle('on', b.dataset.id === id);
   for (const c of dom.lutGrid.children) c.classList.toggle('on', c.dataset.id === id);
   scrollLookIntoView();
@@ -773,6 +784,7 @@ function saveSettings() { prefs.set('settings', state.settings); }
    ──────────────────────────────────────────────────────────── */
 
 let galleryItems = [];
+let lastShownShotId = null;
 
 /** Photos and clips share one roll, newest first. */
 async function refreshGallery() {
@@ -815,12 +827,21 @@ async function refreshGallery() {
   }
 
   const latest = galleryItems[0];
+  const isNew = latest && latest.id !== lastShownShotId;
+  lastShownShotId = latest?.id || null;
+
   dom.lastShot.textContent = '';
   if (latest) {
     const img = document.createElement('img');
     img.src = latest.thumb;
     img.alt = 'Last capture';
     dom.lastShot.appendChild(img);
+    if (isNew) {
+      dom.lastShot.classList.remove('pop');
+      void dom.lastShot.offsetWidth;
+      dom.lastShot.classList.add('pop');
+      setTimeout(() => dom.lastShot.classList.remove('pop'), 700);
+    }
   } else {
     const e = document.createElement('span');
     e.className = 'thumb-empty';
@@ -1052,6 +1073,7 @@ function syncModeUI() {
     'aria-label',
     state.mode === 'video' ? (state.recording ? 'Stop recording' : 'Record') : 'Capture'
   );
+  movePill(dom.modeSwitch, dom.modeSwitch.querySelector('.mode.on'));
 }
 
 /** A still off the offscreen renderer — the live canvas can't be read back. */
@@ -1185,6 +1207,23 @@ async function flipCamera() {
   } finally { state.busy = false; }
 }
 
+/**
+ * Position the sliding indicator behind the active option. One object moving
+ * reads better than two backgrounds swapping.
+ */
+function movePill(container, active) {
+  if (!container) return;
+  if (!active) { container.style.setProperty('--pill-o', '0'); return; }
+  container.style.setProperty('--pill-x', active.offsetLeft + 'px');
+  container.style.setProperty('--pill-w', active.offsetWidth + 'px');
+  container.style.setProperty('--pill-o', '1');
+}
+
+function movePills() {
+  movePill(dom.modeSwitch, dom.modeSwitch?.querySelector('.mode.on'));
+  movePill(dom.zoomRail, dom.zoomRail?.querySelector('.zoom.on'));
+}
+
 function setRatio(index) {
   state.ratioIndex = index;
   prefs.set('ratio', ratio().id);
@@ -1199,8 +1238,11 @@ function setRatio(index) {
 
 function syncZoomRail() {
   for (const b of dom.zoomRail.children) {
-    b.classList.toggle('on', Math.abs(Number(b.dataset.zoom) - state.zoom) < 0.05);
+    if (b.classList.contains('zoom')) {
+      b.classList.toggle('on', Math.abs(Number(b.dataset.zoom) - state.zoom) < 0.05);
+    }
   }
+  movePill(dom.zoomRail, dom.zoomRail.querySelector('.zoom.on'));
 }
 
 function syncTorchChip() {
@@ -1440,7 +1482,7 @@ function wireChrome() {
     else if (!state.running && prefs.get('cameraStarted', false)) startCamera();
   });
 
-  window.addEventListener('resize', syncFrameBox);
+  window.addEventListener('resize', () => { syncFrameBox(); movePills(); });
   window.addEventListener('orientationchange', () => setTimeout(syncFrameBox, 250));
 }
 
@@ -1491,6 +1533,7 @@ async function boot() {
   buildFilmstrip();
   buildAdjust();
   syncModeUI();
+  syncZoomRail();
   sfx.enabled = state.settings.sound;
   wireSound();
   wireChrome();

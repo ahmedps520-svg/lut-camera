@@ -103,6 +103,30 @@ check('ratio chip advances the framing',
   Math.abs(afterTap.aspect - 1) < 0.03 && afterTap.label === '1:1',
   `${afterTap.label} @ ${afterTap.aspect.toFixed(3)}`);
 
+/* ── 1b. the sliding indicator tracks the selection ──────── */
+const pillOf = (selector) => page.evaluate((sel) => {
+  const el = document.querySelector(sel);
+  const style = getComputedStyle(el);
+  return {
+    x: style.getPropertyValue('--pill-x').trim(),
+    w: style.getPropertyValue('--pill-w').trim(),
+    o: style.getPropertyValue('--pill-o').trim(),
+  };
+}, selector);
+
+const zoom1 = await pillOf('#zoomRail');
+await page.evaluate(() => document.querySelector('.zoom[data-zoom="3"]').click());
+await page.waitForTimeout(400);
+const zoom3 = await pillOf('#zoomRail');
+check('zoom indicator slides to the selection',
+  zoom1.x !== zoom3.x && zoom3.o === '1', `${zoom1.x} → ${zoom3.x}`);
+await page.evaluate(() => document.querySelector('.zoom[data-zoom="1"]').click());
+await page.waitForTimeout(300);
+
+const modePill = await pillOf('#modeSwitch');
+check('mode indicator is positioned', modePill.o === '1' && modePill.w !== '',
+  `x=${modePill.x} w=${modePill.w}`);
+
 /* ── 2. sound cues fire on interaction ───────────────────── */
 await page.evaluate(() => {
   window.__cues = [];
@@ -213,6 +237,42 @@ const silent = await cuesAfter(() => page.locator('#sheet-settings [data-close]'
 check('cues are still routed when muted (engine decides)', Array.isArray(silent));
 
 check('no uncaught page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+/* ── 5. Reduce Motion is honoured ─────────────────────────── */
+const calm = await browser.newContext({
+  reducedMotion: 'reduce',
+  viewport: { width: 402, height: 874 },
+  deviceScaleFactor: 1, isMobile: true, hasTouch: true,
+});
+const calmPage = await calm.newPage();
+await calmPage.goto(base, { waitUntil: 'networkidle' });
+await calmPage.waitForFunction(() => !!window.__luma, { timeout: 20000 });
+await calmPage.waitForTimeout(400);
+
+const motion = await calmPage.evaluate(() => {
+  const sheet = document.getElementById('sheet-luts');
+  const style = getComputedStyle(sheet);
+  const root = getComputedStyle(document.documentElement);
+  return {
+    transitionProperty: style.transitionProperty,
+    slow: root.getPropertyValue('--dur-slow').trim(),
+    micro: root.getPropertyValue('--dur-micro').trim(),
+  };
+});
+check('Reduce Motion drops travel from transitions',
+  !/transform/.test(motion.transitionProperty), motion.transitionProperty);
+check('Reduce Motion keeps fades rather than snapping',
+  /opacity/.test(motion.transitionProperty), motion.transitionProperty);
+check('Reduce Motion shortens the duration scale',
+  motion.slow === '140ms' && motion.micro === '1ms', `${motion.micro} / ${motion.slow}`);
+
+// the celebration must not throw confetti at someone who asked for less motion
+await calmPage.evaluate(() => window.__luma.celebrate({ title: 'TEST' }));
+await calmPage.waitForTimeout(400);
+check('Reduce Motion skips the confetti but keeps the banner',
+  await calmPage.evaluate(() => !document.querySelector('.celebrate canvas')
+    && !!document.querySelector('.celebrate-banner')));
+await calm.close();
 
 await browser.close();
 server.close();
