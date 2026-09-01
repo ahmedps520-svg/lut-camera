@@ -13,28 +13,28 @@ export class Paywall {
     this.onUnlock = null;
 
     document.getElementById('paywallClose').addEventListener('click', () => this.close());
-    this.cta.addEventListener('click', () => this.#buy());
-    document.getElementById('btnRestore').addEventListener('click', () => this.#restore());
+    this.cta.addEventListener('click', () => this._buy());
+    document.getElementById('btnRestore').addEventListener('click', () => this._restore());
     document.getElementById('btnTerms').addEventListener('click', () =>
       toast('Subscriptions renew automatically until cancelled.', '', 3000));
     document.getElementById('btnPrivacy').addEventListener('click', () =>
       toast('Photos and LUTs never leave your device.', '', 3000));
 
-    this.#renderPlans();
+    this._renderPlans();
   }
 
   open(reason) {
     if (reason) toast(reason, 'gold', 2600);
     this.el.hidden = false;
     this.el.querySelector('.paywall-scroll').scrollTop = 0;
-    this.#renderPlans();
+    this._renderPlans();
   }
 
   close() { this.el.hidden = true; }
 
   get isOpen() { return !this.el.hidden; }
 
-  #renderPlans() {
+  _renderPlans() {
     this.plansEl.textContent = '';
     for (const plan of PLANS) {
       const btn = document.createElement('button');
@@ -50,14 +50,14 @@ export class Paywall {
       btn.addEventListener('click', () => {
         this.selected = plan.id;
         haptic(6);
-        this.#renderPlans();
+        this._renderPlans();
       });
       this.plansEl.appendChild(btn);
     }
-    this.#syncCta();
+    this._syncCta();
   }
 
-  #syncCta() {
+  _syncCta() {
     const plan = billing.planById(this.selected);
     const price = priceOf(plan);
     const trialAvailable = !!plan.trialDays && !localStorage.getItem('luma:trialUsed');
@@ -72,7 +72,7 @@ export class Paywall {
     this.fine.textContent += ` Prices shown in ${pricing.currency}.`;
   }
 
-  async #buy() {
+  async _buy() {
     const plan = billing.planById(this.selected);
     this.cta.disabled = true;
     const prev = this.cta.textContent;
@@ -88,11 +88,11 @@ export class Paywall {
     } finally {
       this.cta.disabled = false;
       this.cta.textContent = prev;
-      this.#syncCta();
+      this._syncCta();
     }
   }
 
-  async #restore() {
+  async _restore() {
     const ent = await billing.restore();
     if (ent && billing.isPro) {
       toast('Purchases restored.', 'gold');

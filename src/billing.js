@@ -116,7 +116,7 @@ class Billing extends EventTarget {
 
   async init() {
     this.entitlement = await this.adapter.status();
-    this.#emit();
+    this._emit();
     return this.entitlement;
   }
 
@@ -141,13 +141,13 @@ class Billing extends EventTarget {
     const plan = this.planById(planId);
     if (!plan) throw new Error('Unknown plan');
     this.entitlement = await this.adapter.purchase(plan);
-    this.#emit();
+    this._emit();
     return this.entitlement;
   }
 
   async restore() {
     this.entitlement = await this.adapter.restore();
-    this.#emit();
+    this._emit();
     return this.entitlement;
   }
 
@@ -155,7 +155,7 @@ class Billing extends EventTarget {
   async cancel() {
     prefs.remove('entitlement');
     this.entitlement = null;
-    this.#emit();
+    this._emit();
   }
 
   /* ── gating helpers ─────────────────────────────────────── */
@@ -167,7 +167,7 @@ class Billing extends EventTarget {
   get watermark() { return !this.isPro && FREE_LIMITS.watermark; }
   get maxLongEdge() { return this.isPro ? Infinity : FREE_LIMITS.maxLongEdge; }
 
-  #emit() { this.dispatchEvent(new CustomEvent('change', { detail: this.entitlement })); }
+  _emit() { this.dispatchEvent(new CustomEvent('change', { detail: this.entitlement })); }
 }
 
 export const billing = new Billing();

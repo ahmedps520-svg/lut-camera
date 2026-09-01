@@ -29,29 +29,29 @@ export class Sheets {
     for (const btn of document.querySelectorAll('[data-close]')) {
       btn.addEventListener('click', () => this.close());
     }
-    for (const sheet of document.querySelectorAll('.sheet')) this.#enableDragToClose(sheet);
+    for (const sheet of document.querySelectorAll('.sheet')) this._enableDragToClose(sheet);
   }
 
   open(name) {
     const el = document.getElementById('sheet-' + name);
     if (!el) return;
-    if (this.current && this.current !== el) this.#hide(this.current);
+    if (this.current && this.current !== el) this._hide(this.current);
     this.current = el;
     el.hidden = false;
     el.setAttribute('aria-hidden', 'false');
     this.scrim.hidden = false;
     requestAnimationFrame(() => el.classList.add('open'));
-    this.#syncTabs(name);
+    this._syncTabs(name);
     this.dispatch('open', name);
   }
 
   close() {
     if (!this.current) return;
     const name = this.current.id.replace('sheet-', '');
-    this.#hide(this.current);
+    this._hide(this.current);
     this.current = null;
     this.scrim.hidden = true;
-    this.#syncTabs(null);
+    this._syncTabs(null);
     this.dispatch('close', name);
   }
 
@@ -62,19 +62,19 @@ export class Sheets {
 
   get openName() { return this.current ? this.current.id.replace('sheet-', '') : null; }
 
-  #hide(el) {
+  _hide(el) {
     el.classList.remove('open');
     el.setAttribute('aria-hidden', 'true');
     setTimeout(() => { if (!el.classList.contains('open')) el.hidden = true; }, 340);
   }
 
-  #syncTabs(name) {
+  _syncTabs(name) {
     for (const t of document.querySelectorAll('.tab')) {
       t.classList.toggle('on', t.dataset.sheet === name);
     }
   }
 
-  #enableDragToClose(sheet) {
+  _enableDragToClose(sheet) {
     const grabber = sheet.querySelector('.grabber');
     const head = sheet.querySelector('.sheet-head');
     let startY = 0, dy = 0, dragging = false;
@@ -108,9 +108,9 @@ export class Sheets {
     window.addEventListener('mouseup', up);
   }
 
-  #listeners = {};
-  on(evt, fn) { (this.#listeners[evt] ||= []).push(fn); return this; }
-  dispatch(evt, arg) { (this.#listeners[evt] || []).forEach((f) => f(arg)); }
+  _listeners = {};
+  on(evt, fn) { (this._listeners[evt] ||= []).push(fn); return this; }
+  dispatch(evt, arg) { (this._listeners[evt] || []).forEach((f) => f(arg)); }
 }
 
 /** Build one labelled slider row for the Adjust sheet. */

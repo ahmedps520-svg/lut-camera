@@ -1509,47 +1509,60 @@ async function boot() {
     return;
   }
 
-  await billing.init();
-  billing.addEventListener('change', () => {
-    syncProChip();
-    rebuildLookUI();
-    buildAdjust();
-    if (sheets.openName === 'settings') buildSettings();
-  });
-  syncProChip();
-
-  await loadLooks();
-  applyAdjust();
-
-  dom.grid.hidden = !state.grid;
-  el('btnGrid').classList.toggle('on', state.grid);
-  el('ratioLabel').textContent = ratio().label;
-  dom.frame.dataset.ratio = ratio().id;
-  dom.strength.value = Math.round(state.mix * 100);
-  dom.strengthVal.textContent = dom.strength.value;
-  dom.strength.style.setProperty('--fill', dom.strength.value + '%');
-  dom.lutName.textContent = currentLook()?.name || 'Neutral';
-
-  buildFilmstrip();
-  buildAdjust();
-  syncModeUI();
-  syncZoomRail();
-  sfx.enabled = state.settings.sound;
-  wireSound();
+  // Wire the essential controls — above all, "Enable Camera" — before anything
+  // that can fail for reasons unrelated to the camera (billing storage, the
+  // look library, thumbnail rendering). A camera app must never end up with a
+  // dead button just because some secondary feature threw during setup.
   wireChrome();
   wireImport();
   wireViewer();
   wireViewfinderGestures();
-  await refreshGallery();
+  el('startCam').addEventListener('click', () => prefs.set('cameraStarted', true), { once: true });
 
-  paywall.onUnlock = ({ restored = false } = {}) => {
+  try {
+    await billing.init();
+    billing.addEventListener('change', () => {
+      syncProChip();
+      rebuildLookUI();
+      buildAdjust();
+      if (sheets.openName === 'settings') buildSettings();
+    });
     syncProChip();
-    rebuildLookUI();
+
+    await loadLooks();
+    applyAdjust();
+
+    dom.grid.hidden = !state.grid;
+    el('btnGrid').classList.toggle('on', state.grid);
+    el('ratioLabel').textContent = ratio().label;
+    dom.frame.dataset.ratio = ratio().id;
+    dom.strength.value = Math.round(state.mix * 100);
+    dom.strengthVal.textContent = dom.strength.value;
+    dom.strength.style.setProperty('--fill', dom.strength.value + '%');
+    dom.lutName.textContent = currentLook()?.name || 'Neutral';
+
+    buildFilmstrip();
     buildAdjust();
-    sfx.play('purchase');
-    haptic([12, 40, 12, 40, 24]);
-    celebrate({ title: restored ? 'PRO RESTORED' : 'LUMA PRO' });
-  };
+    syncModeUI();
+    syncZoomRail();
+    sfx.enabled = state.settings.sound;
+    wireSound();
+
+    paywall.onUnlock = ({ restored = false } = {}) => {
+      syncProChip();
+      rebuildLookUI();
+      buildAdjust();
+      sfx.play('purchase');
+      haptic([12, 40, 12, 40, 24]);
+      celebrate({ title: restored ? 'PRO RESTORED' : 'LUMA PRO' });
+    };
+  } catch (err) {
+    // Looks, billing and sound are all secondary to being able to point the
+    // camera at something — log it and keep going rather than stall the app.
+    console.error('Non-essential setup failed:', err);
+  }
+
+  try { await refreshGallery(); } catch (err) { console.error('Gallery failed to load:', err); }
 
   await ensureUploaded(preview, state.lookId, PREVIEW_LUT_SIZE).catch(() => {});
   syncFrameBox();
@@ -1560,8 +1573,6 @@ async function boot() {
     const st = await navigator.permissions?.query?.({ name: 'camera' });
     if (st?.state === 'granted') startCamera();
   } catch { /* Safari has no camera permission query */ }
-
-  el('startCam').addEventListener('click', () => prefs.set('cameraStarted', true), { once: true });
 
   // Test/debug hook — opt-in via ?debug so it never ships enabled by default.
   if (new URLSearchParams(location.search).has('debug')) {
