@@ -66,7 +66,7 @@ const state = {
 const el = (id) => document.getElementById(id);
 const dom = {
   frame: el('frame'), preview: el('preview'), gate: el('gate'), gateSub: el('gateSub'),
-  stage: el('stage'),
+  stage: el('stage'), controls: el('controls'),
   topbar: el('topbar'), grid: el('gridOverlay'), focus: el('focusRing'), flash: el('shutterFlash'),
   compare: el('compareBadge'), countdown: el('countdown'),
   filmstrip: el('filmstrip'), lutName: el('lutName'), strength: el('strength'), strengthVal: el('strengthVal'),
@@ -89,6 +89,7 @@ const paywall = new Paywall();
 
 let preview = null;    // Renderer for the viewfinder + full-res capture
 let thumbs = null;     // Renderer for filmstrip / grid thumbnails
+let recordRenderer = null;   // Renderer for video, decoupled from the on-screen preview size
 let looks = [];        // [{id,name,cat,free,custom}]
 const bakeCache = new Map();   // `${id}@${size}` -> parsed LUT
 
@@ -154,14 +155,18 @@ let lastBox = '';
  */
 function syncFrameBox() {
   const stage = dom.stage.getBoundingClientRect();
+  const controls = dom.controls.getBoundingClientRect();
   if (!stage.width) return;
 
-  // `.stage` is the flex-grow remainder of `.app` after `.controls` (flex:none)
-  // takes its own height — getBoundingClientRect() already reflects that, so
-  // subtracting controls.height again here would double-count it and leave
-  // the frame far smaller than the space actually available.
+  // `.controls` (tabs, shutter, mode switch) is a sibling of `.frame` *inside*
+  // `.stage`, not a sibling of `.stage` under `.app` — `.stage` is the only
+  // flex item there, so its own box is the full app height. That means
+  // `.frame` and `.controls` are sharing `.stage`'s height in the same
+  // column, and controls.height has to come out of the frame's budget or a
+  // tall ratio (e.g. 9:16) grows the frame straight through the controls and
+  // pushes them off the bottom of the screen.
   const availW = Math.max(1, stage.width - 20);
-  const availH = Math.max(1, stage.height - 6);
+  const availH = Math.max(1, stage.height - controls.height - 6);
   const r = ratio().value;
 
   let w = availW;
@@ -196,6 +201,41 @@ function drawPreview() {
   });
 }
 
+const RECORD_LONG_EDGE = 3840;   // 4K UHD
+
+/**
+ * The resolution to record at: as high as the sensor's own delivered frame
+ * actually supports at the current aspect, capped at 4K on the long edge.
+ * The on-screen preview canvas is sized for the display, not the sensor, so
+ * video was quietly capped at whatever that happened to be — recording
+ * needs its own full-resolution target, independent of it.
+ */
+function recordSize() {
+  const [cw, ch] = camera.size;
+  const aspect = ratio().value;
+  if (!cw || !ch) return [1920, 1080];
+  let fw, fh;
+  if (aspect >= cw / ch) { fw = cw; fh = Math.round(cw / aspect); }
+  else { fh = ch; fw = Math.round(ch * aspect); }
+  const scale = Math.min(1, RECORD_LONG_EDGE / Math.max(fw, fh));
+  // even dimensions — H.264/VP9 encoders choke on odd ones
+  const w = Math.max(2, Math.round((fw * scale) / 2) * 2);
+  const h = Math.max(2, Math.round((fh * scale) / 2) * 2);
+  return [w, h];
+}
+
+function drawRecordFrame() {
+  if (!recordRenderer || !camera.ready) return;
+  recordRenderer.uploadFrame(camera.video, camera.video.videoWidth, camera.video.videoHeight);
+  recordRenderer.draw({
+    aspect: ratio().value,
+    zoom: cropZoomFor(state.zoom),
+    mirror: camera.isFront,
+    lutId: state.lookId,
+    mix: state.mix,
+  });
+}
+
 let rafId = 0;
 let lastThumbRefresh = 0;
 
@@ -209,6 +249,7 @@ function loop(now) {
   if (!state.running || state.busy || viewfinderObscured()) return;
   syncFrameBox();
   drawPreview();
+  if (state.recording) drawRecordFrame();
   state.frames++;
   if (state.settings.liveThumbs && now - lastThumbRefresh > 2000) {
     lastThumbRefresh = now;
@@ -1105,7 +1146,12 @@ async function grabClipThumb() {
 async function startRecording() {
   if (!billing.canRecordVideo) { paywall.open('LUMA Motion — video is part of Pro'); return; }
   try {
-    const { audio } = await recorder.start(dom.preview, {
+    await ensureUploaded(recordRenderer, state.lookId, PREVIEW_LUT_SIZE);
+    const [rw, rh] = recordSize();
+    recordRenderer.resize(rw, rh);
+    drawRecordFrame();   // paint one real frame before captureStream() starts grabbing
+
+    const { audio } = await recorder.start(recordRenderer.canvas, {
       audio: state.settings.recordAudio,
       maxSeconds: MAX_CLIP_SECONDS,
     });
@@ -1156,8 +1202,8 @@ async function stopRecording() {
       mimeType,
       duration,
       look: currentLook()?.name || 'Neutral',
-      width: dom.preview.width,
-      height: dom.preview.height,
+      width: recordRenderer.canvas.width,
+      height: recordRenderer.canvas.height,
       createdAt: Date.now(),
     };
     await db.saveClip(record);
@@ -1628,6 +1674,7 @@ async function boot() {
   try {
     preview = new Renderer(dom.preview);
     thumbs = new Renderer(document.createElement('canvas'));
+    recordRenderer = new Renderer(document.createElement('canvas'));
   } catch (err) {
     dom.gateSub.textContent = 'This browser cannot run the LUMA colour engine (WebGL2 required). Try Safari 15+ or Chrome.';
     el('startCam').disabled = true;

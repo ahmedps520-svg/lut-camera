@@ -27,6 +27,12 @@ function withTimeout(promise, ms) {
   ]);
 }
 
+/** A bitrate that scales with actual pixel throughput instead of assuming 1080p. */
+function bitrateFor(width, height, fps) {
+  const pixelsPerSecond = width * height * fps;
+  return Math.round(Math.min(50_000_000, Math.max(8_000_000, pixelsPerSecond * 0.12)));
+}
+
 export class VideoRecorder {
   constructor() {
     this.recorder = null;
@@ -128,7 +134,7 @@ export class VideoRecorder {
     this.chunks = [];
     this.recorder = new MediaRecorder(stream, {
       mimeType: this.mimeType,
-      videoBitsPerSecond: 12_000_000,
+      videoBitsPerSecond: bitrateFor(canvas.width, canvas.height, fps),
     });
     this.recorder.ondataavailable = (event) => {
       if (event.data && event.data.size) this.chunks.push(event.data);

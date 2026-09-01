@@ -65,11 +65,18 @@ const frameBox = () => page.evaluate(() => {
   const frame = document.getElementById('frame').getBoundingClientRect();
   const canvas = document.getElementById('preview');
   const stage = document.getElementById('stage').getBoundingClientRect();
+  const controls = document.getElementById('controls').getBoundingClientRect();
   return {
     w: frame.width, h: frame.height,
     aspect: frame.width / frame.height,
     canvasAspect: canvas.width / canvas.height,
     fitsStage: frame.width <= stage.width + 1 && frame.height <= stage.height + 1,
+    // .controls (tabs, shutter, mode switch) lives inside .stage as a sibling
+    // of .frame, not outside it — a tall ratio that doesn't budget for
+    // .controls' own height grows .frame straight through it and pushes the
+    // whole control block off the bottom of the screen.
+    controlsTop: controls.top,
+    overlapsControls: frame.bottom > controls.top + 1,
     label: document.getElementById('ratioLabel').textContent.trim(),
     ratioId: window.__luma.state.ratioIndex,
   };
@@ -79,11 +86,13 @@ const frameBox = () => page.evaluate(() => {
 await page.evaluate(() => window.__luma.setRatio(0));
 await page.waitForTimeout(450);
 
+let firstControlsTop = null;
 for (let i = 0; i < RATIOS.length; i++) {
   const expected = RATIOS[i];
   await page.evaluate((index) => window.__luma.setRatio(index), i);
   await page.waitForTimeout(450);                 // the frame animates its size
   const box = await frameBox();
+  firstControlsTop ??= box.controlsTop;
   check(`frame is ${expected.id}`,
     Math.abs(box.aspect - expected.value) < 0.03,
     `${box.w.toFixed(0)}×${box.h.toFixed(0)} = ${box.aspect.toFixed(3)} (want ${expected.value.toFixed(3)})`);
@@ -91,6 +100,9 @@ for (let i = 0; i < RATIOS.length; i++) {
     Math.abs(box.canvasAspect - expected.value) < 0.03, box.canvasAspect.toFixed(3));
   check(`${expected.id} fits inside the stage`, box.fitsStage);
   check(`${expected.id} label updates`, box.label === expected.id, box.label);
+  check(`${expected.id} does not push the tabs/shutter off screen`,
+    !box.overlapsControls && Math.abs(box.controlsTop - firstControlsTop) < 1,
+    `controls.top ${box.controlsTop.toFixed(1)} (baseline ${firstControlsTop.toFixed(1)})`);
 }
 
 // and the chip itself cycles through them
