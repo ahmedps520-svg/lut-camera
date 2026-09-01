@@ -75,10 +75,13 @@
       </header>
 
       <!-- Zoom rail -->
-      <div class="zoomrail" id="zoomRail">
-        <button class="zoom" data-zoom="1">1×</button>
-        <button class="zoom" data-zoom="2">2×</button>
-        <button class="zoom" data-zoom="3">3×</button>
+      <div class="zoomrail" id="zoomRail" role="slider" tabindex="0"
+           aria-label="Zoom" aria-valuemin="0.5" aria-valuemax="50" aria-valuenow="1" aria-valuetext="1.0×">
+        <div class="zoom-track">
+          <div class="zoom-fill" id="zoomFill"></div>
+          <div class="zoom-pips" id="zoomPips"></div>
+        </div>
+        <span class="zoom-value" id="zoomValue">1.0×</span>
       </div>
     </div>
 

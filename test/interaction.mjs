@@ -114,13 +114,32 @@ const pillOf = (selector) => page.evaluate((sel) => {
   };
 }, selector);
 
-const zoom1 = await pillOf('#zoomRail');
-await page.evaluate(() => document.querySelector('.zoom[data-zoom="3"]').click());
-await page.waitForTimeout(400);
-const zoom3 = await pillOf('#zoomRail');
-check('zoom indicator slides to the selection',
-  zoom1.x !== zoom3.x && zoom3.o === '1', `${zoom1.x} → ${zoom3.x}`);
-await page.evaluate(() => document.querySelector('.zoom[data-zoom="1"]').click());
+/* ── 1c. zoom is a continuous drag slider, not a few fixed stops ── */
+const zoomReadout = () => page.evaluate(() => ({
+  fill: document.getElementById('zoomFill').style.width,
+  text: document.getElementById('zoomValue').textContent,
+  now: Number(document.getElementById('zoomRail').getAttribute('aria-valuenow')),
+}));
+
+const zoom1 = await zoomReadout();
+await page.evaluate(() => window.__luma.setZoom(3));
+await page.waitForTimeout(200);
+const zoom3 = await zoomReadout();
+check('zoom slider fill tracks the selection',
+  zoom1.fill !== zoom3.fill && zoom3.text === '3.0×', `${zoom1.fill} → ${zoom3.fill} (${zoom3.text})`);
+
+await page.evaluate(() => window.__luma.setZoom(50));
+await page.waitForTimeout(200);
+const zoomMax = await zoomReadout();
+check('zoom reaches 50x', zoomMax.now === 50, zoomMax.text);
+
+await page.evaluate(() => window.__luma.setZoom(0.1));
+await page.waitForTimeout(200);
+const zoomFloor = await zoomReadout();
+check('zoom is clamped at the device floor (no ultra-wide lens in the fake stream)',
+  zoomFloor.now === 1, zoomFloor.text);
+
+await page.evaluate(() => window.__luma.setZoom(1));
 await page.waitForTimeout(300);
 
 const modePill = await pillOf('#modeSwitch');
@@ -135,6 +154,20 @@ await page.evaluate(() => {
   engine.play = (name, options) => { window.__cues.push(name); return original(name, options); };
 });
 
+// The live camera keeps a WebGL draw loop running on the main thread, and
+// under this sandbox's software rasterizer that's enough to starve
+// Playwright's own actionability polling — real mouse clicks can hang
+// indefinitely. Dispatch straight in-page instead (same workaround
+// smoke.mjs and features.mjs use for the same reason). Sound cues are wired
+// to a delegated `pointerdown` listener, not `click`, so fire both — a bare
+// `.click()` alone would silently skip every cue assertion below.
+const clickJs = (selector) => page.evaluate((sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return;
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true }));
+  el.click();
+}, selector);
+
 const cuesAfter = async (action) => {
   await page.evaluate(() => { window.__cues = []; });
   await action();
@@ -143,30 +176,30 @@ const cuesAfter = async (action) => {
 };
 
 check('audio context is created on first interaction', await (async () => {
-  await page.locator('#btnGrid').click({ force: true });
+  await clickJs('#btnGrid');
   await page.waitForTimeout(200);
   return page.evaluate(() => !!window.__luma.sfx.ctx);
 })());
 
-const chipCues = await cuesAfter(() => page.locator('#btnGrid').click({ force: true }));
+const chipCues = await cuesAfter(() => clickJs('#btnGrid'));
 check('chips click', chipCues.includes('chip'), chipCues.join(','));
 check('a chip tap does not also refocus the lens',
   !chipCues.includes('focus'), chipCues.join(','));
 
-const tabCues = await cuesAfter(() => page.locator('.tab[data-sheet="luts"]').click({ force: true }));
+const tabCues = await cuesAfter(() => clickJs('.tab[data-sheet="luts"]'));
 check('tabs play a cue and open the sheet',
   tabCues.includes('tab') && tabCues.includes('sheetOpen'), tabCues.join(','));
 
-const segCues = await cuesAfter(() => page.locator('.seg[data-filter="mono"]').click({ force: true }));
+const segCues = await cuesAfter(() => clickJs('.seg[data-filter="mono"]'));
 check('segmented filter cues', segCues.includes('select'), segCues.join(','));
 
-const closeCues = await cuesAfter(() => page.locator('#sheet-luts [data-close]').click({ force: true }));
+const closeCues = await cuesAfter(() => clickJs('#sheet-luts [data-close]'));
 check('closing a sheet cues', closeCues.includes('sheetClose'), closeCues.join(','));
 
-const lookCues = await cuesAfter(() => page.locator('.look[data-id="noir"]').click({ force: true }));
+const lookCues = await cuesAfter(() => clickJs('.look[data-id="noir"]'));
 check('choosing a look cues', lookCues.includes('select'), lookCues.join(','));
 
-const lockedCues = await cuesAfter(() => page.locator('.look[data-id="ember"]').click({ force: true }));
+const lockedCues = await cuesAfter(() => clickJs('.look[data-id="ember"]'));
 check('a locked look sounds locked', lockedCues.includes('lock'), lockedCues.join(','));
 await page.evaluate(() => window.__luma.paywall.close());
 await page.waitForTimeout(300);
@@ -178,7 +211,7 @@ const sliderCues = await cuesAfter(() => page.evaluate(() => {
 }));
 check('sliders tick', sliderCues.includes('slider'), sliderCues.join(','));
 
-const modeCues = await cuesAfter(() => page.locator('.mode[data-mode="video"]').click({ force: true }));
+const modeCues = await cuesAfter(() => clickJs('.mode[data-mode="video"]'));
 check('the mode switch cues', modeCues.includes('mode'), modeCues.join(','));
 await page.evaluate(() => window.__luma.paywall.close());
 await page.waitForTimeout(300);
@@ -187,7 +220,7 @@ await page.waitForTimeout(300);
 await page.evaluate(() => { window.__cues = []; });
 await page.evaluate(() => window.__luma.paywall.open());
 await page.waitForTimeout(300);
-await page.locator('#btnSubscribe').click({ force: true });
+await clickJs('#btnSubscribe');
 
 // The celebration is deliberately short-lived, and every round trip here costs
 // hundreds of ms with the camera running — so wait for it, then gather every
@@ -224,16 +257,19 @@ check('the celebration cleans itself up',
   await page.evaluate(() => !document.querySelector('.celebrate')));
 
 /* ── 4. the sound toggle ─────────────────────────────────── */
-await page.locator('.tab[data-sheet="settings"]').click({ force: true });
+await clickJs('.tab[data-sheet="settings"]');
 await page.waitForTimeout(700);
-await page.locator('#settingsBody .row', { hasText: 'Sound effects' })
-  .locator('.switch').click({ force: true });
+await page.evaluate(() => {
+  const row = [...document.querySelectorAll('#settingsBody .row')]
+    .find((r) => r.textContent.includes('Sound effects'));
+  row?.querySelector('.switch')?.click();
+});
 await page.waitForTimeout(300);
 check('sound can be turned off and persists', await page.evaluate(() =>
   JSON.parse(localStorage.getItem('luma:sound') || 'true') === false
   && window.__luma.sfx.enabled === false));
 
-const silent = await cuesAfter(() => page.locator('#sheet-settings [data-close]').click({ force: true }));
+const silent = await cuesAfter(() => clickJs('#sheet-settings [data-close]'));
 check('cues are still routed when muted (engine decides)', Array.isArray(silent));
 
 check('no uncaught page errors', errors.length === 0, errors.slice(0, 2).join(' | '));

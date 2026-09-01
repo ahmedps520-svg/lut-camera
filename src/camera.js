@@ -15,6 +15,13 @@ export class Camera {
     this.stream = null;
     this.facing = 'environment';
     this.track = null;
+    /** deviceId of the back camera's ultra-wide lens, once found — null until
+     *  {@link discoverLenses} runs, or permanently if this device has none. */
+    this.ultrawideId = null;
+    this.primaryId = null;
+    /** 'primary' | 'ultrawide' | null — which physical back lens is live. */
+    this.activeLens = null;
+    this._switchingLens = false;
   }
 
   get isFront() { return this.facing === 'user'; }
@@ -66,6 +73,14 @@ export class Camera {
         setTimeout(res, 3000);
       });
     }
+
+    this.ultrawideId = null;
+    this.primaryId = settings.deviceId || null;
+    this.activeLens = this.isFront ? null : 'primary';
+    // awaited so callers that check `hasUltrawide` right after start() (e.g.
+    // to size the zoom control) see the real answer, not a false "no lens yet"
+    if (!this.isFront) await this.discoverLenses();
+
     return this.track;
   }
 
@@ -74,10 +89,62 @@ export class Camera {
     this.stream = null;
     this.track = null;
     this.video.srcObject = null;
+    this.activeLens = null;
   }
 
   async flip(quality) {
     return this.start(this.isFront ? 'environment' : 'user', quality);
+  }
+
+  /**
+   * Find the back camera's ultra-wide lens, if this device has one. iOS Safari
+   * exposes each physical back lens as its own enumerated device once
+   * permission is granted (labels look like "Back Ultra Wide Camera", "Back
+   * Camera", "Back Telephoto Camera" — exact strings vary by device/iOS
+   * version), which is the only way to reach true sub-1x framing: a digital
+   * crop can only narrow the current lens's field of view, never widen it.
+   */
+  async discoverLenses() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const backCams = devices.filter((d) => d.kind === 'videoinput' && !/front/i.test(d.label));
+      const ultra = backCams.find((d) => /ultra.?\s?wide/i.test(d.label));
+      if (ultra) this.ultrawideId = ultra.deviceId;
+    } catch { /* labels can be blank pre-permission on some browsers; no lens list then */ }
+  }
+
+  get hasUltrawide() { return !!this.ultrawideId; }
+
+  /**
+   * Switch the live stream to a different physical back lens. Best-effort:
+   * on any failure the existing stream is left running untouched.
+   * @param {'primary'|'ultrawide'} lens
+   */
+  async useLens(lens) {
+    if (this.isFront || this._switchingLens || this.activeLens === lens) return true;
+    const deviceId = lens === 'ultrawide' ? this.ultrawideId : this.primaryId;
+    if (!deviceId) return false;
+
+    this._switchingLens = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 4096 }, height: { ideal: 3072 } },
+        audio: false,
+      });
+      const oldStream = this.stream;
+      this.stream = stream;
+      this.track = stream.getVideoTracks()[0];
+      this.video.srcObject = stream;
+      await this.video.play().catch(() => {});
+      oldStream?.getTracks().forEach((t) => t.stop());
+      this.activeLens = lens;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._switchingLens = false;
+    }
   }
 
   caps() {

@@ -25,6 +25,9 @@ const RATIOS = [
   { id: '2.39', label: '2.39', value: 2.39 },
 ];
 const TIMERS = [0, 3, 10];
+// 0.5x needs a physical ultra-wide lens (see camera.hasUltrawide); everything
+// past the sensor's native zoom ceiling out to 50x is a digital crop.
+const MAX_ZOOM = 50;
 const PREVIEW_LUT_SIZE = 33;
 const THUMB_LUT_SIZE = 17;
 
@@ -63,11 +66,12 @@ const state = {
 const el = (id) => document.getElementById(id);
 const dom = {
   frame: el('frame'), preview: el('preview'), gate: el('gate'), gateSub: el('gateSub'),
-  stage: el('stage'), controls: el('controls'),
+  stage: el('stage'),
   topbar: el('topbar'), grid: el('gridOverlay'), focus: el('focusRing'), flash: el('shutterFlash'),
   compare: el('compareBadge'), countdown: el('countdown'),
   filmstrip: el('filmstrip'), lutName: el('lutName'), strength: el('strength'), strengthVal: el('strengthVal'),
   shutter: el('shutter'), lastShot: el('lastShot'), zoomRail: el('zoomRail'),
+  zoomFill: el('zoomFill'), zoomPips: el('zoomPips'), zoomValue: el('zoomValue'),
   proLabel: el('proLabel'), btnPro: el('btnPro'),
   lutGrid: el('lutGrid'), shotGrid: el('shotGrid'), galleryEmpty: el('galleryEmpty'),
   adjustBody: el('adjustBody'), settingsBody: el('settingsBody'),
@@ -150,11 +154,14 @@ let lastBox = '';
  */
 function syncFrameBox() {
   const stage = dom.stage.getBoundingClientRect();
-  const controls = dom.controls.getBoundingClientRect();
   if (!stage.width) return;
 
+  // `.stage` is the flex-grow remainder of `.app` after `.controls` (flex:none)
+  // takes its own height — getBoundingClientRect() already reflects that, so
+  // subtracting controls.height again here would double-count it and leave
+  // the frame far smaller than the space actually available.
   const availW = Math.max(1, stage.width - 20);
-  const availH = Math.max(1, stage.height - controls.height - 6);
+  const availH = Math.max(1, stage.height - 6);
   const r = ratio().value;
 
   let w = availW;
@@ -182,7 +189,7 @@ function drawPreview() {
   preview.uploadFrame(camera.video, camera.video.videoWidth, camera.video.videoHeight);
   preview.draw({
     aspect: ratio().value,
-    zoom: state.zoom,
+    zoom: cropZoomFor(state.zoom),
     mirror: camera.isFront,
     lutId: state.compare ? '__identity__' : state.lookId,
     mix: state.compare ? 0 : state.mix,
@@ -985,7 +992,7 @@ async function doCapture() {
     await ensureUploaded(preview, state.lookId, PREVIEW_LUT_SIZE);
     const shot = await captureStill(preview, camera.video, {
       aspect: ratio().value,
-      zoom: state.zoom,
+      zoom: cropZoomFor(state.zoom),
       mirror: camera.isFront && state.settings.mirrorSelfie,
       lutId: state.lookId,
       mix: state.mix,
@@ -1084,7 +1091,7 @@ async function grabClipThumb() {
     const w = 320;
     const h = Math.round(w / aspect);
     thumbs.uploadFrame(camera.video, camera.video.videoWidth, camera.video.videoHeight);
-    const gl = thumbs.renderTo(w, h, { aspect, zoom: state.zoom, mirror: camera.isFront,
+    const gl = thumbs.renderTo(w, h, { aspect, zoom: cropZoomFor(state.zoom), mirror: camera.isFront,
                                        lutId: state.lookId, mix: state.mix, grain: 0 });
     const flat = document.createElement('canvas');
     flat.width = w; flat.height = h;
@@ -1177,6 +1184,7 @@ async function startCamera() {
     await camera.start(camera.facing, state.settings.quality);
     state.running = true;
     dom.gate.hidden = true;
+    buildZoomPips();
     syncZoomRail();
     syncTorchChip();
     toast(`${camera.size[0]}×${camera.size[1]} · ${camera.isFront ? 'Front' : 'Rear'} camera`, '', 1800);
@@ -1200,6 +1208,7 @@ async function flipCamera() {
   try {
     await camera.flip(state.settings.quality);
     state.zoom = 1;
+    buildZoomPips();   // the front camera has no ultra-wide, so the range may shrink
     syncZoomRail();
     syncTorchChip();
   } catch (err) {
@@ -1221,7 +1230,6 @@ function movePill(container, active) {
 
 function movePills() {
   movePill(dom.modeSwitch, dom.modeSwitch?.querySelector('.mode.on'));
-  movePill(dom.zoomRail, dom.zoomRail?.querySelector('.zoom.on'));
 }
 
 function setRatio(index) {
@@ -1236,13 +1244,73 @@ function setRatio(index) {
   drawPreview();
 }
 
+/**
+ * The lowest zoom this device can actually reach. 1x is the sensor's native
+ * framing; true sub-1x ("ultra-wide") only exists if the back camera has a
+ * second, wider physical lens to switch to — a digital crop can narrow a
+ * frame, never widen it.
+ */
+function zoomMin() {
+  return camera.hasUltrawide ? 0.5 : 1;
+}
+
+/** The highest zoom the current lens/sensor reaches optically, before digital crop takes over. */
+function nativeZoomMax() {
+  return camera.zoomRange?.max || 1;
+}
+
+/**
+ * Crop factor to feed the renderer for a requested zoom level. 1x..native-max
+ * is covered by the lens itself (crop 1 = full frame); above that, and in the
+ * 0.5x..1x ultra-wide band, we crop into the live frame digitally.
+ */
+function cropZoomFor(z) {
+  if (z < 1) return z / zoomMin();           // crop into the ultra-wide frame toward 1x
+  const nativeMax = nativeZoomMax();
+  return z > nativeMax ? z / nativeMax : 1;  // crop past the sensor's optical ceiling
+}
+
+function clampZ(z) {
+  return Math.min(MAX_ZOOM, Math.max(zoomMin(), z));
+}
+
+// The 0.5x–50x range spans 100x, so the slider (and pinch/wheel steps) work
+// in log space — equal drag distance means equal *multiplicative* zoom change,
+// which is how zoom actually reads to the eye.
+function zoomToT(z) {
+  const lo = Math.log(zoomMin()), hi = Math.log(MAX_ZOOM);
+  return (Math.log(clampZ(z)) - lo) / (hi - lo);
+}
+function tToZoom(t) {
+  const lo = Math.log(zoomMin()), hi = Math.log(MAX_ZOOM);
+  return Math.exp(lo + Math.min(1, Math.max(0, t)) * (hi - lo));
+}
+
+function formatZoom(z) {
+  return `${z < 10 ? z.toFixed(1) : Math.round(z)}×`;
+}
+
 function syncZoomRail() {
-  for (const b of dom.zoomRail.children) {
-    if (b.classList.contains('zoom')) {
-      b.classList.toggle('on', Math.abs(Number(b.dataset.zoom) - state.zoom) < 0.05);
-    }
+  const t = zoomToT(state.zoom);
+  if (dom.zoomFill) dom.zoomFill.style.width = `${t * 100}%`;
+  if (dom.zoomValue) dom.zoomValue.textContent = formatZoom(state.zoom);
+  dom.zoomRail.setAttribute('aria-valuemin', String(zoomMin()));
+  dom.zoomRail.setAttribute('aria-valuenow', state.zoom.toFixed(2));
+  dom.zoomRail.setAttribute('aria-valuetext', formatZoom(state.zoom));
+}
+
+/** Tick marks along the rail at the zoom levels worth calling out. */
+function buildZoomPips() {
+  if (!dom.zoomPips) return;
+  dom.zoomPips.innerHTML = '';
+  const lo = zoomMin();
+  const marks = [...new Set([lo, 1, 2, 5, 10, 20, 50].filter((z) => z >= lo))];
+  for (const z of marks) {
+    const pip = document.createElement('div');
+    pip.className = 'zoom-pip' + (Math.abs(z - 1) < 0.01 ? ' major' : '');
+    pip.style.left = `${zoomToT(z) * 100}%`;
+    dom.zoomPips.appendChild(pip);
   }
-  movePill(dom.zoomRail, dom.zoomRail.querySelector('.zoom.on'));
 }
 
 function syncTorchChip() {
@@ -1317,11 +1385,69 @@ function distance(touches) {
   return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 }
 
+let lensSwitchTimer = 0;
+
+/**
+ * Crossing the 1x boundary means switching to a physically different lens,
+ * which re-acquires the camera stream — too slow to do on every drag tick.
+ * Debounce it so a drag that merely passes through 1x doesn't thrash lenses.
+ */
+function scheduleLensSwitch(z) {
+  if (!camera.hasUltrawide) return;
+  const wantLens = z < 1 ? 'ultrawide' : 'primary';
+  if (camera.activeLens === wantLens || camera._switchingLens) return;
+  clearTimeout(lensSwitchTimer);
+  lensSwitchTimer = setTimeout(() => maybeSwitchLens(wantLens), 220);
+}
+
+async function maybeSwitchLens(lens) {
+  const stillWanted = (state.zoom < 1) === (lens === 'ultrawide');
+  if (!stillWanted) return;
+  await camera.useLens(lens);
+  drawPreview();
+}
+
 function setZoom(z) {
-  state.zoom = Math.min(6, Math.max(1, z));
+  state.zoom = clampZ(z);
   sfx.play('zoom', { throttle: 120 });
   syncZoomRail();
-  camera.setZoom(state.zoom);   // native when the track supports it, digital otherwise
+  if (state.zoom >= 1) camera.setZoom(state.zoom);   // native hint; renderer crop covers the rest
+  scheduleLensSwitch(state.zoom);
+}
+
+function wireZoomRail() {
+  const rail = dom.zoomRail;
+  if (!rail) return;
+
+  const zoomAt = (clientX) => {
+    const r = rail.getBoundingClientRect();
+    if (!r.width) return state.zoom;
+    return tToZoom((clientX - r.left) / r.width);
+  };
+
+  rail.addEventListener('pointerdown', (e) => {
+    rail.setPointerCapture(e.pointerId);
+    rail.classList.add('dragging');
+    setZoom(zoomAt(e.clientX));
+  });
+  rail.addEventListener('pointermove', (e) => {
+    if (!rail.hasPointerCapture?.(e.pointerId)) return;
+    setZoom(zoomAt(e.clientX));
+  });
+  const release = (e) => {
+    if (rail.hasPointerCapture?.(e.pointerId)) rail.releasePointerCapture(e.pointerId);
+    rail.classList.remove('dragging');
+  };
+  rail.addEventListener('pointerup', release);
+  rail.addEventListener('pointercancel', release);
+
+  rail.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : state.zoom < 2 ? 0.1 : state.zoom < 10 ? 0.5 : 2;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setZoom(state.zoom + step); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setZoom(state.zoom - step); }
+    else if (e.key === 'Home') { e.preventDefault(); setZoom(zoomMin()); }
+    else if (e.key === 'End') { e.preventDefault(); setZoom(MAX_ZOOM); }
+  });
 }
 
 function setCompare(on) {
@@ -1364,8 +1490,10 @@ function tapToFocus(clientX, clientY) {
 function wireSound() {
   const onDown = (event) => {
     sfx.unlock();                       // iOS: the first gesture starts audio
+    // zoom has its own cue (setZoom plays 'zoom' directly, throttled) — the
+    // rail is a continuous drag, not a discrete tap, so it's excluded here
     const target = event.target?.closest?.(
-      'button, .look, .lut-card, .shot, .plan, .seg, .tab, .chip, .mode, .zoom, [data-sfx]'
+      'button, .look, .lut-card, .shot, .plan, .seg, .tab, .chip, .mode, [data-sfx]'
     );
     if (!target || target.disabled) return;
     const cue = cueFor(target);
@@ -1422,9 +1550,7 @@ function wireChrome() {
     setRatio((state.ratioIndex + 1) % RATIOS.length);
   });
 
-  for (const b of dom.zoomRail.children) {
-    b.addEventListener('click', () => setZoom(Number(b.dataset.zoom)));
-  }
+  wireZoomRail();
 
   dom.strength.addEventListener('input', () => {
     state.mix = Number(dom.strength.value) / 100;
@@ -1578,7 +1704,7 @@ async function boot() {
   if (new URLSearchParams(location.search).has('debug')) {
     window.__luma = { state, camera, preview, thumbs, looks, billing, sheets, paywall,
                       pricing, recorder, refreshThumbs, sfx, celebrate,
-                      shoot, startRecording, stopRecording, setMode, setRatio };
+                      shoot, startRecording, stopRecording, setMode, setRatio, setZoom };
   }
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

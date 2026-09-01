@@ -249,10 +249,14 @@ await tap('#sheet-adjust [data-close]');
 /* ── 9. framing + zoom ───────────────────────────────────── */
 await tap('#btnRatio');
 check('aspect ratio cycles', (await page.locator('#ratioLabel').textContent()).trim() === '1:1');
-await tap('.zoom[data-zoom="2"]');
+await page.evaluate(() => window.__luma.setZoom(2));
 check('zoom rail sets digital zoom', await page.evaluate(() => window.__luma.state.zoom === 2));
+check('zoom rail reaches the professional range (50x)', await page.evaluate(() => {
+  window.__luma.setZoom(50);
+  return window.__luma.state.zoom === 50;
+}));
 await tap('#btnRatio'); await tap('#btnRatio'); await tap('#btnRatio');
-await tap('.zoom[data-zoom="1"]');
+await page.evaluate(() => window.__luma.setZoom(1));
 
 /* ── 10. the render loop pauses behind full-screen surfaces ─ */
 await resumeCamera();
