@@ -1,5 +1,5 @@
 /* LUMA service worker — offline shell. Photos and LUTs live in IndexedDB, not here. */
-const CACHE = 'luma-v3';
+const CACHE = 'luma-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -22,9 +22,11 @@ const ASSETS = [
   './src/lut/presets.js',
   './src/ui/ui.js',
   './src/ui/paywall.js',
+  './assets/icon-32.png',
   './assets/icon-180.png',
   './assets/icon-192.png',
   './assets/icon-512.png',
+  './assets/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (e) => {
